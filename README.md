@@ -1,4 +1,10 @@
-## 服务器频道消息格式
+### xiaoming-minecraft
+# 小明-MC-QQ 互通插件
+该插件为 `Bukkit`、`Spigot`、`Paper` 等 `Minecraft` 服务器提供关联 QQ 的支持，使其能在 QQ 上进行包括但不限于执行控制台指令、分频道的互相聊天、申请执行指令、跨区域 @ 用户等操作。
+
+文档还没写完 `_(:з」∠)_`，有待更新。
+
+<!-- ## 服务器频道消息格式
 ### 可用变量
 |变量名|含义|
 |---|---|
@@ -24,4 +30,4 @@
 |`sender.alias`|发送者备注|
 |`channel.name`|
 |`channel.head`|
-|`channel.groupTag`|
+|`channel.groupTag`| -->
