@@ -1,0 +1,9 @@
+configurations:
+  ip: 'localHost'
+  port: 23333
+
+  identify: 'xiaoming-minecraft-plugin-client-default-identify'
+  xiaomingIdentify: 'xiaoming-minecraft-plugin-server-default-identify'
+  reconnectDelay: 20000
+  autoConnect: true
+  timeout: 60000
