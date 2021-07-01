@@ -16,4 +16,6 @@ public class GroupChannel {
     String groupTag;
     String name;
     String format = "{sender.alias}：{message}";
+    String serverTag = "recorded";
+    String worldTag = "recorded";
 }

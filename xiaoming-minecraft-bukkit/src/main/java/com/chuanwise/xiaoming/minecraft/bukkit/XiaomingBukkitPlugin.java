@@ -86,6 +86,19 @@ public class XiaomingBukkitPlugin extends JavaPlugin {
                     getLogger().severe("连接小明时出现异常");
                     exception.printStackTrace();
                 }
+//                if (!bukkitSocket.test() && configuration.isAutoReconnect()) {
+//                    getLogger().info("将在" + TimeUtils.toTimeString(configuration.getReconnectDelay()) + "后自动重连");
+//                }
+//                try {
+//                    do {
+//                        if (!bukkitSocket.isConnected()) {
+//
+//                        }
+//                        Thread.sleep(configuration.getReconnectDelay());
+//                    } while (configuration.isAutoReconnect());
+//                } catch (InterruptedException exception) {
+//                    getLogger().severe("连接任务被打断");
+//                }
             });
         }
 

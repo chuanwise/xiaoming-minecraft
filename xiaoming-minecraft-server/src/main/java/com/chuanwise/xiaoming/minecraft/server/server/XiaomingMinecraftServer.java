@@ -11,8 +11,10 @@ import org.slf4j.Logger;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -48,13 +50,23 @@ public class XiaomingMinecraftServer {
         return socket;
     }
 
-    public BukkitPluginReceptionist forReceptionist(String name) {
+    public BukkitPluginReceptionist forName(String name) {
         for (BukkitPluginReceptionist receptionist : receptionists) {
             if (Objects.equals(receptionist.getDetail().getName(), name)) {
                 return receptionist;
             }
         }
         return null;
+    }
+
+    public Set<BukkitPluginReceptionist> forTag(String tag) {
+        final Set<BukkitPluginReceptionist> result = new HashSet<>();
+        for (BukkitPluginReceptionist receptionist : receptionists) {
+            if (receptionist.getDetail().hasTag(tag)) {
+                result.add(receptionist);
+            }
+        }
+        return result;
     }
 
     public void restart(long delay) throws IOException, InterruptedException {
@@ -77,6 +89,7 @@ public class XiaomingMinecraftServer {
             while (running) {
                 try {
                     final Socket socket = requireConfiguredSocket(serverSocket.accept());
+                    logger.info("接入新的服务器，正在准备");
                     threadPool.execute(new BukkitPluginReceptionist(plugin, socket));
                 } catch (IOException exception) {
                     logger.error("与新的 Minecraft 服务器插件客户端连接时出现异常", exception);

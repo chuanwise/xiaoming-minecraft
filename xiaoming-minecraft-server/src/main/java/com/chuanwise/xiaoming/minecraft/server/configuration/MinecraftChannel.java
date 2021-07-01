@@ -16,6 +16,7 @@ public class MinecraftChannel {
     String head;
     String worldTag;
     String serverTag;
+    String groupTag = "recorded";
     String name;
 
     String format = "§7[§e{channel.name}§7] §a{sender.alias} §b>§1> §r{message}";

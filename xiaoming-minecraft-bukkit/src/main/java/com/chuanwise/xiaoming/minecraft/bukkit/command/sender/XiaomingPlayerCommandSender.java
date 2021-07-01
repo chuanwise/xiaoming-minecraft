@@ -97,6 +97,7 @@ public class XiaomingPlayerCommandSender extends XiaomingCommandSender<Player> i
 
     @Override
     public void sendRawMessage(String s) {
+        messages.add(s);
         commandSender.sendRawMessage(s);
     }
 

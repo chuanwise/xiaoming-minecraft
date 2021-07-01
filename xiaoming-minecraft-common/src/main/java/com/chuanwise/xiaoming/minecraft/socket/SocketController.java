@@ -6,6 +6,7 @@ import com.chuanwise.xiaoming.minecraft.pack.content.IdContent;
 import com.chuanwise.xiaoming.minecraft.pack.content.ResultContent;
 import com.chuanwise.xiaoming.minecraft.thread.StopableRunnable;
 import com.chuanwise.xiaoming.minecraft.util.ByteUtils;
+import com.chuanwise.xiaoming.minecraft.util.TimeUtils;
 import lombok.Data;
 import org.slf4j.Logger;
 
@@ -27,10 +28,12 @@ public class SocketController implements StopableRunnable {
 
     final Logger logger;
 
-    final ExecutorService threadPool = Executors.newCachedThreadPool();
+    final ExecutorService threadPool = Executors.newFixedThreadPool(5);
 
     Consumer<Throwable> onThrowable = Throwable::printStackTrace;
     Consumer<Pack> onUnknownPack;
+    Consumer<Pack> onReceivePack;
+    Consumer<Pack> onSendPack;
     Runnable onNormalExit;
     Runnable onFinally;
 
@@ -40,6 +43,8 @@ public class SocketController implements StopableRunnable {
     final Map<PackType, List<Consumer<Pack>>> listeners = new ConcurrentHashMap<>();
 
     volatile boolean running;
+    volatile boolean debug;
+
     volatile Throwable throwable;
 
     volatile long lastReceiveTime = System.currentTimeMillis();
@@ -92,13 +97,14 @@ public class SocketController implements StopableRunnable {
             final String serializedPack = pack.serialize();
             final byte[] bytes = serializedPack.getBytes(socketConfiguration.encode);
 
-            // logger.info("send: " + pack);
-
             outputStream.write(ByteUtils.intToByteArray(bytes.length));
             outputStream.flush();
 
             outputStream.write(bytes);
             outputStream.flush();
+
+            runIfNonNull(onSendPack, pack);
+            logIfDebug("send << " + pack);
         }
     }
 
@@ -206,7 +212,6 @@ public class SocketController implements StopableRunnable {
             Pack pack = null;
             try {
                 pack = Pack.deserialize(serializedPack);
-                // logger.info("receive: " + pack);
                 deserializeSuccessfully = Objects.nonNull(pack);
             } catch (Throwable throwable) {
                 deserializeSuccessfully = false;
@@ -217,6 +222,8 @@ public class SocketController implements StopableRunnable {
                     recentPacks.add(pack);
                     recentPacks.notifyAll();
                 }
+                runIfNonNull(onReceivePack, pack);
+                logIfDebug("receive >> " + pack);
             } else {
                 logger.error("解析包出现错误（收到的内容为：" + serializedPack + "），可能是通讯协议错误、编码错误或网络问题", throwable);
             }
@@ -234,6 +241,18 @@ public class SocketController implements StopableRunnable {
         }
     }
 
+    public void logIfDebug(String message) {
+        if (debug) {
+            logger.info(message);
+        }
+    }
+
+    public void logIfDebug(String message, Throwable throwable) {
+        if (debug) {
+            logger.error(message, throwable);
+        }
+    }
+
     @Override
     public void run() {
         running = true;
@@ -245,10 +264,13 @@ public class SocketController implements StopableRunnable {
                     while (running) {
                         if (System.currentTimeMillis() - lastReceiveTime > socketConfiguration.heartbeatPeriod) {
                             send(Pack.HEARTBEAT_REQUEST_PACK);
+                        } else {
+                            logIfDebug("心跳发送：最近收包时间距今为" + TimeUtils.toTimeString(System.currentTimeMillis() - lastReceiveTime) + "，小于要求时间，不发送心跳包");
                         }
                         Thread.sleep(socketConfiguration.heartbeatPeriod);
                     }
                 } catch (Throwable throwable) {
+                    logIfDebug("心跳发送出现异常", throwable);
                     stop();
                 }
             });
@@ -270,6 +292,7 @@ public class SocketController implements StopableRunnable {
                         Thread.sleep(socketConfiguration.heartbeatPeriod);
                     }
                 } catch (Throwable throwable) {
+                    logIfDebug("看门狗出现异常", throwable);
                     stop();
                 }
             });
@@ -287,6 +310,7 @@ public class SocketController implements StopableRunnable {
                     }
                 }
             } catch (Throwable throwable) {
+                logIfDebug("自动清包出现异常", throwable);
                 stop();
             }
         });
@@ -303,6 +327,7 @@ public class SocketController implements StopableRunnable {
                     }
                 }
             } catch (Throwable throwable) {
+                logIfDebug("自动发包出现异常", throwable);
                 stop();
             }
         });
@@ -325,6 +350,7 @@ public class SocketController implements StopableRunnable {
                     }
                 }
             } catch (Throwable throwable) {
+                logIfDebug("自动收包出现异常", throwable);
                 stop();
             }
         });
@@ -334,6 +360,7 @@ public class SocketController implements StopableRunnable {
                 wait();
             } catch (InterruptedException exception) {
             } finally {
+                logIfDebug("连接即将断开");
                 if (Objects.nonNull(throwable)) {
                     runIfNonNull(onThrowable, throwable);
                 } else {
@@ -360,6 +387,7 @@ public class SocketController implements StopableRunnable {
     public void stopCausedBy(Throwable throwable) {
         this.throwable = throwable;
         logger.error("连接因异常断开：" + throwable);
+        runIfNonNull(onThrowable, throwable);
         stop();
     }
 

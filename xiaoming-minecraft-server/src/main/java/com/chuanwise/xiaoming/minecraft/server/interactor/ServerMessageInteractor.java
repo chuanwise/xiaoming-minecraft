@@ -11,14 +11,12 @@ import com.chuanwise.xiaoming.api.util.ArgumentUtils;
 import com.chuanwise.xiaoming.api.util.CollectionUtils;
 import com.chuanwise.xiaoming.core.interactor.message.MessageInteractorImpl;
 import com.chuanwise.xiaoming.minecraft.server.XiaomingMinecraftPlugin;
-import com.chuanwise.xiaoming.minecraft.server.configuration.ChatSettings;
-import com.chuanwise.xiaoming.minecraft.server.configuration.MinecraftChannel;
-import com.chuanwise.xiaoming.minecraft.server.configuration.MinecraftServerDetail;
-import com.chuanwise.xiaoming.minecraft.server.configuration.ServerConfiguration;
+import com.chuanwise.xiaoming.minecraft.server.configuration.*;
 import com.chuanwise.xiaoming.minecraft.server.data.ServerPlayer;
 import com.chuanwise.xiaoming.minecraft.server.data.ServerPlayerData;
 import com.chuanwise.xiaoming.minecraft.server.server.BukkitPluginReceptionist;
 import com.chuanwise.xiaoming.minecraft.server.server.XiaomingMinecraftServer;
+import com.chuanwise.xiaoming.minecraft.server.util.EnvironmentUtils;
 import com.chuanwise.xiaoming.minecraft.util.Formatter;
 import com.chuanwise.xiaoming.minecraft.util.StringUtils;
 import com.chuanwise.xiaoming.minecraft.util.TimeUtils;
@@ -48,7 +46,6 @@ public class ServerMessageInteractor extends MessageInteractorImpl {
         final int maxIterateTime = getXiaomingBot().getConfiguration().getMaxIterateTime();
         final Set<MinecraftChannel> minecraftChannels = chatSettings.getMinecraftChannels();
 
-        final Set<MinecraftChannel> lackPermissionChannels = new HashSet<>();
         final Set<MinecraftChannel> failChannels = new HashSet<>();
 
         // 检查是否有 @ 全体和个人
@@ -60,68 +57,64 @@ public class ServerMessageInteractor extends MessageInteractorImpl {
             }
         }
 
+        final Map<String, String> commonEnvironment = EnvironmentUtils.forUser(user);
+        commonEnvironment.putAll(EnvironmentUtils.forGroup(user.getContact()));
+        commonEnvironment.put("time", TimeUtils.FORMAT.format(System.currentTimeMillis()));
+
         // @ 个人比 @ 全体优先级高，所以先发 @ 全体再发 @ 个人
         // 如果带有 @ 全体，那就转发到服务器发送 @ 全体成员消息
-        if (hasAtAll) {
-            final Set<String> failServerNames = new HashSet<>();
+        if (hasAtAll && chatSettings.isEnableAtAllNotice()) {
             final List<BukkitPluginReceptionist> receptionists = server.getReceptionists();
-            final String subtitle = "§f请注意§7「§a" + user.getContact().getAlias() + "§7」§f中的消息";
-            final String title = Formatter.yellow("@ 全体成员");
-            final String messageWithoutHead = Formatter.aroundByGrayBracket(Formatter.blue("@ 全体成员")) + " " +
-                    Formatter.blue(user.getAlias()) + Formatter.red(" >> ") + Formatter.yellow(serializedMessage);
+            commonEnvironment.put("message", serializedMessage);
+
+            final String subtitle = ArgumentUtils.replaceArguments(chatSettings.getAtAllSubtitleFormat(), commonEnvironment, maxIterateTime);
+            final String title = ArgumentUtils.replaceArguments(chatSettings.getAtAllTitleFormat(), commonEnvironment, maxIterateTime);
+            final String messageWithoutHead = ArgumentUtils.replaceArguments(chatSettings.getAtAllMessageFormat(), commonEnvironment, maxIterateTime);
+
+            final NoticeType atAllNoticeType = chatSettings.getAtAllNoticeType();
 
             // 找到和本群关联的服务器世界
             receptionists.forEach(receptionist -> {
                 try {
-                    receptionist.sendTitleToAllPlayers(title, subtitle);
-                    receptionist.sendMessageToAllPlayersWithoutMessageHead(messageWithoutHead);
+                    switch (atAllNoticeType) {
+                        case MESSAGE:
+                            receptionist.sendMessageToAllPlayersWithoutMessageHead(messageWithoutHead);
+                            break;
+                        case TITLE:
+                            receptionist.sendTitleToAllPlayers(title, subtitle);
+                            break;
+                        case TITLE_AND_MESSAGE:
+                            receptionist.sendMessageToAllPlayersWithoutMessageHead(messageWithoutHead);
+                            receptionist.sendTitleToAllPlayers(title, subtitle);
+                            break;
+                        default:
+                    }
                 } catch (IOException exception) {
-                    failServerNames.add(receptionist.getDetail().getName());
+                    receptionist.onThrowable(exception);
                 }
             });
-
-            if (!failServerNames.isEmpty()) {
-                if (failServerNames.size() == receptionists.size()) {
-                    user.sendError("小明尝试帮你把 @全体成员 消息转发服务器内，但全都失败了");
-                } else {
-                    user.sendError("小明尝试帮你把 @全体成员 消息转发到所有服务器中，但在这些服务器里失败了：" +
-                            CollectionUtils.getSummary(failServerNames, String::toString, "", "", "、"));
-                }
-            }
         }
 
-
-        final Map<String, Object> commonEnvironment = new HashMap<>();
-        commonEnvironment.put("sender.code", user.getCode());
-        commonEnvironment.put("sender.name", user.getName());
-        commonEnvironment.put("sender.alias", user.getAlias());
-
-        final ServerPlayer serverPlayer = playerData.forPlayer(user.getCode());
-        commonEnvironment.put("sender.id", Objects.nonNull(serverPlayer) ? serverPlayer.getId() : "null");
-        commonEnvironment.put("time", TimeUtils.FORMAT.format(System.currentTimeMillis()));
-
-        commonEnvironment.put("group.code", user.getGroupCode());
-        commonEnvironment.put("group.name", user.getContact().getName());
-        commonEnvironment.put("group.alias", user.getContact().getAlias());
-
-        AtomicBoolean sent = new AtomicBoolean(false);
+        String messageWithoutHead = null;
         for (MinecraftChannel channel : minecraftChannels) {
             if (!serializedMessage.startsWith(channel.getHead()) || serializedMessage.length() <= channel.getHead().length()) {
                 continue;
             }
-            final String messageWithoutHead = serializedMessage.substring(channel.getHead().length());
+            messageWithoutHead = serializedMessage.substring(channel.getHead().length());
 
             // 检查权限
-            if (!user.hasPermission("minecraft.chat." + channel.getName())) {
-                lackPermissionChannels.add(channel);
+            if (!user.hasPermission("minecraft.chat.server." + channel.getName())) {
+                failChannels.add(channel);
                 continue;
             }
 
-            final Map<String, Object> channelEnvironment = new HashMap<>();
-            channelEnvironment.put("channel.name", channel.getName());
-            channelEnvironment.put("channel.head", channel.getHead());
-            channelEnvironment.put("channel.serverTag", channel.getServerTag());
-            channelEnvironment.put("channel.worldTag", channel.getWorldTag());
+            // 检查本群是否能发送消息
+            if (!getXiaomingBot().getResponseGroupManager().hasTag(user.getGroupCode(), channel.getGroupTag())) {
+                failChannels.add(channel);
+                continue;
+            }
+
+            final Map<String, String> channelEnvironment = EnvironmentUtils.forMinecraftChannel(channel);
             channelEnvironment.put("message", messageWithoutHead);
 
             final String commonEnvironmentReplacedMessage = ArgumentUtils.replaceArguments(Formatter.translateColorCodes(channel.getFormat()), commonEnvironment, maxIterateTime);
@@ -129,17 +122,16 @@ public class ServerMessageInteractor extends MessageInteractorImpl {
 
             // 对每一个关联的服务器
             try {
-                sent.set(true);
-                final Set<MinecraftServerDetail> details = serverConfigurations.forServerTag(channel.getServerTag());
-                for (MinecraftServerDetail detail : details) {
-                    final BukkitPluginReceptionist receptionist = server.forReceptionist(detail.getName());
-                    if (Objects.isNull(receptionist)) {
+                for (BukkitPluginReceptionist receptionist : server.forTag(channel.getServerTag())) {
+                    final MinecraftServerDetail detail = receptionist.getDetail();
+
+                    // 检查服务器是否有该 tag
+                    if (!detail.hasTag(channel.getServerTag())) {
                         continue;
                     }
 
-                    Map<String, Object> serverEnvironment = new HashMap<>();
-                    serverEnvironment.put("server.name", detail.getName());
-
+                    // 构造服务器环境
+                    final Map<String, String> serverEnvironment = EnvironmentUtils.forServer(detail);
                     final String serverEnvironmentReplacedMessage = ArgumentUtils.replaceArguments(channelEnvironmentReplacedMessage, serverEnvironment, maxIterateTime);
 
                     final StringBuilder finalStringBuilder = new StringBuilder(serverEnvironmentReplacedMessage);
@@ -151,13 +143,6 @@ public class ServerMessageInteractor extends MessageInteractorImpl {
                     if (!worldNames.isEmpty()) {
                         receptionist.sendWorldMessageWithoutMessageHead(worldNames, finalString);
                     }
-
-                    // 对于每一个 @ 到的人，都发消息
-                    if (!noticedOnlinePlayers.isEmpty()) {
-                        receptionist.sendTitle(noticedOnlinePlayers, Formatter.yellow("有人 @ 你"),
-                                Formatter.green(user.getAlias()) + " 在 " +
-                                        Formatter.gray("「") + Formatter.blue(channel.getName()) + Formatter.gray("」") + " 频道 " + Formatter.yellow("@") + " 你了");
-                    }
                 }
             } catch (IOException exception) {
                 failChannels.add(channel);
@@ -165,20 +150,35 @@ public class ServerMessageInteractor extends MessageInteractorImpl {
         }
 
         // 如果不是发送到频道上的，但仍然 @ 了人
-        if (!sent.get()) {
+        boolean sent = false;
+        if (chatSettings.isEnableAtNotice()) {
             final StringBuilder stringBuilder = new StringBuilder(serializedMessage);
             final Set<String> noticedPlayers = getNoticedPlayers(user.getContact(), stringBuilder);
             final String finalMessage = Formatter.translateColorCodes(stringBuilder.toString());
 
+            commonEnvironment.put("message", finalMessage);
+            final String title = ArgumentUtils.replaceArguments(chatSettings.getAtTitleFormat(), commonEnvironment, maxIterateTime);
+            final String subtitle = ArgumentUtils.replaceArguments(chatSettings.getAtSubtitleFormat(), commonEnvironment, maxIterateTime);
+            messageWithoutHead = ArgumentUtils.replaceArguments(chatSettings.getAtMessageFormat(), commonEnvironment, maxIterateTime);
+
             if (!noticedPlayers.isEmpty()) {
+                final NoticeType atNoticeType = chatSettings.getAtNoticeType();
                 for (BukkitPluginReceptionist receptionist : server.getReceptionists()) {
                     try {
-                        receptionist.sendTitle(noticedPlayers, Formatter.yellow("有人 @ 你"), Formatter.yellow(user.getAlias()) +
-                                " 在" + Formatter.gray("「") + Formatter.blue(user.getContact().getAlias()) + Formatter.gray("」") + "里 " +
-                                Formatter.yellow("@") + " 你了");
-                        receptionist.sendMessageWithoutMessageHead(noticedPlayers, Formatter.aroundByGrayBracket(Formatter.blue("有人 @ 你")) + " " +
-                                Formatter.yellow(user.getAlias()) + Formatter.blue(" >> ") + Formatter.green(finalMessage));
-                        sent.set(true);
+                        switch (atNoticeType) {
+                            case TITLE:
+                                receptionist.sendTitle(noticedPlayers, title, subtitle);
+                                break;
+                            case MESSAGE:
+                                receptionist.sendMessageWithoutMessageHead(noticedPlayers, messageWithoutHead);
+                                break;
+                            case TITLE_AND_MESSAGE:
+                                receptionist.sendTitle(noticedPlayers, title, subtitle);
+                                receptionist.sendMessageWithoutMessageHead(noticedPlayers, messageWithoutHead);
+                                break;
+                            default:
+                        }
+                        sent = true;
                     } catch (IOException exception) {
                         receptionist.onThrowable(exception);
                     }
@@ -186,12 +186,12 @@ public class ServerMessageInteractor extends MessageInteractorImpl {
             }
         }
 
-        if (!lackPermissionChannels.isEmpty()) {
-            user.sendError("因为你缺少相关权限，小明没有帮你把消息发送到下面的频道：\n" +
-                    CollectionUtils.getIndexSummary(lackPermissionChannels, MinecraftChannel::getName));
+        if (!failChannels.isEmpty()) {
+            user.sendError("因为因为一些原因，小明没有帮你把消息发送到下面的频道：\n" +
+                    CollectionUtils.getIndexSummary(failChannels, MinecraftChannel::getName));
             return true;
         }
-        return sent.get();
+        return Objects.nonNull(messageWithoutHead) || sent;
     }
 
     /**

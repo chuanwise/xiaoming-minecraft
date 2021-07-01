@@ -36,6 +36,7 @@ public class XiaomingConsoleCommandSender extends XiaomingCommandSender<ConsoleC
 
     @Override
     public void sendRawMessage(String s) {
+        messages.add(s);
         commandSender.sendRawMessage(s);
     }
 }

@@ -24,6 +24,7 @@ public class ServerConfiguration extends JsonFilePreservable {
     int port = 23333;
 
     boolean autoEnableServer = true;
+    volatile boolean debug = false;
 
     boolean enableConnectLog = false;
     boolean enableDisconnectLog = false;

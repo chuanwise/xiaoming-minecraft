@@ -40,7 +40,7 @@ public class ArgumentUtils {
 
     public static final Pattern VARIABLE_REFERENCE = Pattern.compile("\\{(?<identify>[\\S\\s]+?)\\}");
     private static final Random RANDOM = new Random();
-    public static String replaceArguments(String format, Map<String, Object> environment, int maxIterateTime) {
+    public static String replaceArguments(String format, Map<String, ? extends Object> environment, int maxIterateTime) {
         Matcher matcher = VARIABLE_REFERENCE.matcher(format);
         StringBuilder builder = new StringBuilder(format);
 

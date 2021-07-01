@@ -7,6 +7,7 @@ import com.chuanwise.xiaoming.minecraft.bukkit.command.sender.XiaomingConsoleCom
 import com.chuanwise.xiaoming.minecraft.bukkit.command.sender.XiaomingNamedCommandSender;
 import com.chuanwise.xiaoming.minecraft.bukkit.command.sender.XiaomingPlayerCommandSender;
 import com.chuanwise.xiaoming.minecraft.bukkit.configuration.XiaomingBukkitConfiguration;
+import com.chuanwise.xiaoming.minecraft.bukkit.event.XiaomingExecuteCommandEvent;
 import com.chuanwise.xiaoming.minecraft.util.*;
 import com.chuanwise.xiaoming.minecraft.bukkit.util.PlayerUtils;
 import com.chuanwise.xiaoming.minecraft.pack.content.*;
@@ -55,7 +56,17 @@ public class BukkitSocket {
         port = configuration.getPort();
     }
 
+    public void logIfDebug(String message) {
+        if (configuration.isDebug()) {
+            logger.info(message);
+        }
+    }
+
     public synchronized void connect() throws IOException {
+        if (test()) {
+            return;
+        }
+
         logger.info("正在和小明建立连接");
         controller = new SocketController(new Socket(address, port),
                 LoggerFactory.getLogger(logger.getName()), true);
@@ -74,15 +85,24 @@ public class BukkitSocket {
             disconnectOrReconnect();
         });
 
+        controller.setDebug(configuration.isDebug());
+        controller.setOnThrowable(throwable -> {
+            if (configuration.isDebug()) {
+                throwable.printStackTrace();
+            }
+        });
+
         controller.register(PackType.XM_ERROR, pack -> {
             final String message = pack.getContent(String.class);
             final String messageOrNull = Objects.nonNull(message) && !message.isEmpty() ? ("（" + message + "）") : "";
 
             logger.severe("小明发生错误" + messageOrNull);
+            disconnect();
         });
 
         controller.register(PackType.XM_DISCONNECT, pack -> {
             logger.warning("小明断开了与 Minecraft 服务器的连接");
+            disconnect();
         });
 
         controller.register(PackType.XM_REQUIRE_MC_ENCRYPTED_IDENTIFY, pack -> {
@@ -167,20 +187,18 @@ public class BukkitSocket {
         disconnect();
         logger.info("将在" + TimeUtils.toTimeString(delay) + "后重连");
         Thread.sleep(delay);
-        if (!test()) {
-            connect();
-        }
+        connect();
     }
 
     public Long getBindedQQ(String playerId) throws IOException {
-        logger.info("正在获取玩家 " + playerId + " 绑定的 QQ");
+        logIfDebug("正在获取玩家 " + playerId + " 绑定的 QQ");
         final int requestId = allocateRequestId();
         controller.sendLater(PackType.MC_GET_BINDED_QQ, new IdContent(requestId, playerId));
         return controller.nextContent(PackType.XM_GET_BINDED_QQ_RESULT, requestId).getContent(Long.class);
     }
 
     public String getAliasOrCode(String playerId) throws IOException {
-        logger.info("正在获取玩家 " + playerId + " 绑定的 QQ 的备注");
+        logIfDebug("正在获取玩家 " + playerId + " 绑定的 QQ 的备注");
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, playerId);
         return controller.nextContent(PackType.XM_GET_ALIAS_OR_CODE_RESULT, requestId).getContent(String.class);
@@ -188,7 +206,7 @@ public class BukkitSocket {
 
     public synchronized void disconnectOrReconnect() {
         try {
-            if (isConnected()) {
+            if (test()) {
                 disconnect();
             }
             if (configuration.isAutoReconnect()) {
@@ -220,7 +238,7 @@ public class BukkitSocket {
     }
 
     public Set<PlayerContent> onOnlinePlayers() {
-        logger.info("获取在线玩家列表");
+        logIfDebug("获取在线玩家列表");
         final Collection<? extends Player> onlinePlayers = server.getOnlinePlayers();
         final Set<PlayerContent> playerSummaries = new HashSet<>(onlinePlayers.size());
         onlinePlayers.forEach(player -> {
@@ -231,7 +249,7 @@ public class BukkitSocket {
     }
 
     public Set<String> onGetWorldNames() {
-        logger.info("获取世界列表");
+        logIfDebug("获取世界列表");
         final Set<String> worldNames = new HashSet<>();
         server.getWorlds().forEach(world -> worldNames.add(world.getName()));
 
@@ -240,14 +258,14 @@ public class BukkitSocket {
     }
 
     public boolean onHasWorld(int requestId, String worldName) {
-        logger.info("检查存在某世界 " + worldName);
+        logIfDebug("检查存在某世界 " + worldName);
         final boolean content = Objects.nonNull(server.getWorld(worldName));
         PackUtils.sendResult(controller, requestId, PackType.MC_HAS_WORLD_RESULT, new IdContent(requestId, content));
         return content;
     }
 
     public boolean onHasPermission(int requestId, String playerId, String permission) {
-        logger.info("检查玩家 " + playerId + " 是否具备权限 " + permission);
+        logIfDebug("检查玩家 " + playerId + " 是否具备权限 " + permission);
         final Player player = server.getPlayer(playerId);
         final boolean content = Objects.nonNull(player) && player.hasPermission(permission);
         PackUtils.sendResult(controller, requestId, PackType.MC_HAS_PERMISSION_RESULT, content);
@@ -255,7 +273,7 @@ public class BukkitSocket {
     }
 
     public boolean onIsOnline(int requestId, String playerId) {
-        logger.info("检查用户 " + playerId + " 是否在线");
+        logIfDebug("检查用户 " + playerId + " 是否在线");
         final Player player = server.getPlayer(playerId);
         final boolean content = Objects.nonNull(player) && player.isOnline();
         PackUtils.sendResult(controller, requestId, PackType.MC_CHECK_ONLINE_RESULT, content);
@@ -263,6 +281,7 @@ public class BukkitSocket {
     }
 
     public ResultContent onSendWorldMessage(int requestId, Set<String> worldNames, String message) {
+        logIfDebug("在世界：" + worldNames + " 内显示消息：" + message);
         final Set<String> failWorldNames = new HashSet<>();
         if (worldNames.isEmpty()) {
             return PackUtils.sendResult(controller, requestId, PackType.MC_SEND_WORLD_MESSAGE_RESULT, false, "没有需要发送消息的世界");
@@ -297,18 +316,22 @@ public class BukkitSocket {
     }
 
     public void onBroadcastMessage(String message) {
+        logIfDebug("广播消息：" + message);
         server.broadcastMessage(message);
     }
 
     public ResultContent onExecuteAsConsole(int requestId, String command) {
-        logger.info("以控制台身份执行命令：" + command + "，请求 ID：" + requestId);
+        logIfDebug("以控制台身份执行命令：" + command + "，请求 ID：" + requestId);
 
+        server.getScheduler().runTask(plugin, () -> {
+            server.getPluginManager().callEvent(new XiaomingExecuteCommandEvent(requestId, null, command));
+        });
         final XiaomingConsoleCommandSender fakeConsole = new XiaomingConsoleCommandSender(server.getConsoleSender());
         final ResultContent resultContent = new ResultContent();
         server.getScheduler().runTask(plugin, () -> {
             try {
                 resultContent.setSuccess(server.dispatchCommand(fakeConsole, command));
-                resultContent.setObject(CollectionUtils.getSummary(fakeConsole.getMessages(), String::toString, "", null, "\n"));
+                resultContent.setObject(CollectionUtils.getSummary(fakeConsole.getMessages(), String::toString, "", "指令已执行，无返回结果", "\n"));
             } catch (CommandException exception) {
                 resultContent.setSuccess(false);
                 sendLogger("以控制台身份执行指令 " + command + " 时出现异常：" + exception);
@@ -320,7 +343,7 @@ public class BukkitSocket {
     }
 
     public ResultContent onExecuteAsPlayer(int requestId, String playerId, String command) {
-        logger.info("以玩家：" + playerId + " 身份执行命令：" + command + "，请求 ID：" + requestId);
+        logIfDebug("以玩家：" + playerId + " 身份执行命令：" + command + "，请求 ID：" + requestId);
         final Player realPlayer = server.getPlayer(playerId);
         final XiaomingCommandSender<?> fakePlayer;
 
@@ -331,11 +354,14 @@ public class BukkitSocket {
             realPlayer.sendMessage(Formatter.headThen(Formatter.yellow("小明将以你的身份执行指令：" + Formatter.green(command))));
         }
 
+        server.getScheduler().runTask(plugin, () -> {
+            server.getPluginManager().callEvent(new XiaomingExecuteCommandEvent(requestId, playerId, command));
+        });
         final ResultContent resultContent = new ResultContent();
         server.getScheduler().runTask(plugin, () -> {
             try {
                 resultContent.setSuccess(server.dispatchCommand(fakePlayer, command));
-                resultContent.setObject(CollectionUtils.getSummary(fakePlayer.getMessages(), String::toString, "", null, "\n"));
+                resultContent.setObject(CollectionUtils.getSummary(fakePlayer.getMessages(), String::toString, "", "指令已执行，无返回结果", "\n"));
             } catch (CommandException exception) {
                 resultContent.setSuccess(false);
                 sendLogger("以玩家 " + playerId + " 身份执行指令 " + command + " 时出现异常：" + exception);
@@ -347,6 +373,7 @@ public class BukkitSocket {
     }
 
     public ResultContent onAsyncPlayerAccept(int requestId, String playerId, String message, long timeout) {
+        logIfDebug("令玩家 " + playerId + " 在" + TimeUtils.toTimeString(timeout) + "内决定：" + message);
         final Player player = server.getPlayer(playerId);
         final ResultContent resultContent = new ResultContent();
 
@@ -361,10 +388,10 @@ public class BukkitSocket {
                 resultContent.setObject("用户正在等待审批另一件事务");
                 return PackUtils.sendResult(controller, requestId, PackType.MC_PLAYER_ACCET_RESULT, resultContent);
             } else {
-                player.sendMessage(Formatter.headThen(message));
+                player.sendMessage(Formatter.headThen(Formatter.yellow(message)));
                 player.sendMessage("若想接受请求，输入 " + Formatter.green("/xmaccept") + "。\n" +
-                        "若想拒绝请求，输入 " + Formatter.yellow("/xmdeny") + "。\n" +
-                        "此请求将在" + Formatter.blue(TimeUtils.toTimeString(timeout)) + "后自动取消");
+                        "若想拒绝请求，输入 " + Formatter.red("/xmdeny") + "。\n" +
+                        "此请求将在" + Formatter.yellow(TimeUtils.toTimeString(timeout)) + "后自动取消");
 
                 commandExecutor.asyncWaitUserAccept(playerId, timeout, () -> {
                     resultContent.setSuccess(true);
@@ -380,6 +407,7 @@ public class BukkitSocket {
     }
 
     public ResultContent onAsyncPlayerConfirm(int requestId, String playerId, String message, long timeout) {
+        logIfDebug("令玩家 " + playerId + " 在" + TimeUtils.toTimeString(timeout) + "内确定：" + message);
         final Player player = server.getPlayer(playerId);
         final ResultContent resultContent = new ResultContent();
 
@@ -394,10 +422,10 @@ public class BukkitSocket {
                 resultContent.setObject("用户正在等待确认另一件事务");
                 return PackUtils.sendResult(controller, requestId, PackType.MC_PLAYER_CONFIRM_RESULT, resultContent);
             } else {
-                player.sendMessage(Formatter.headThen(message));
+                player.sendMessage(Formatter.headThen(Formatter.yellow(message)));
                 player.sendMessage("若想确认请求，输入 " + Formatter.green("/xmconfirm") + "。\n" +
-                        "若想取消请求，输入 " + Formatter.yellow("/xmcancel") + "。\n" +
-                        "此请求将在" + Formatter.blue(TimeUtils.toTimeString(timeout)) + "后自动取消");
+                        "若想取消请求，输入 " + Formatter.red("/xmcancel") + "。\n" +
+                        "此请求将在" + Formatter.yellow(TimeUtils.toTimeString(timeout)) + "后自动取消");
 
                 commandExecutor.asyncWaitUserConfirm(playerId, timeout, () -> {
                     resultContent.setSuccess(true);
@@ -413,6 +441,7 @@ public class BukkitSocket {
     }
 
     public ResultContent onSendMessage(int requestId, Set<String> playerIds, String message) {
+        logIfDebug("向玩家 " + playerIds + " 显示消息：" + message);
         final Set<String> failPlayerNames = new HashSet<>();
 
         for (String playerId : playerIds) {
@@ -432,6 +461,7 @@ public class BukkitSocket {
     }
 
     public ResultContent onSendTitle(int requestId, Set<String> playerIds, String title, String subtitle, int fadeIn, int delay, int fadeOut) {
+        logIfDebug("向玩家 " + playerIds + " 显示标题：" + title + "，副标题：" + subtitle);
         final Set<String> failPlayerNames = new HashSet<>();
 
         for (String playerId : playerIds) {
@@ -452,6 +482,7 @@ public class BukkitSocket {
     }
 
     public ResultContent onSendTitleToAllPlayers(int requestId, String title, String subtitle, int fadeIn, int delay, int fadeOut) {
+        logIfDebug("向所有玩家显示标题：" + title + "，副标题：" + subtitle);
         final Collection<? extends Player> onlinePlayers = server.getOnlinePlayers();
         if (onlinePlayers.isEmpty()) {
             return PackUtils.sendResult(controller, requestId, PackType.MC_SEND_TITLE_RESULT, false, "服务器没有任何玩家");
@@ -464,6 +495,7 @@ public class BukkitSocket {
     }
 
     public ResultContent onSendMessageToAllPlayers(int requestId, String message) {
+        logIfDebug("向所有玩家显示消息：" + message);
         final Collection<? extends Player> onlinePlayers = server.getOnlinePlayers();
         if (onlinePlayers.isEmpty()) {
             return PackUtils.sendResult(controller, requestId, PackType.MC_SEND_MESSAGE_RESULT, false, "服务器没有任何玩家");
@@ -581,7 +613,7 @@ public class BukkitSocket {
     }
 
     public ResultContent sendPlayerChatMessage(Player player, String message, boolean echo) throws IOException {
-        logger.info("正在发送服务器聊天消息：" + player.getName() + "：" + message + "，回响：" + echo);
+        logIfDebug("正在发送服务器聊天消息：" + player.getName() + "：" + message + "，回响：" + echo);
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, new PlayerChatContent(PlayerUtils.forPlayer(player), message, echo));
 
@@ -590,7 +622,7 @@ public class BukkitSocket {
     }
 
     public ResultContent unbind(String playerId) throws IOException {
-        logger.info("正在请求解绑：" + playerId);
+        logIfDebug("正在请求解绑：" + playerId);
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, playerId);
 
@@ -599,7 +631,7 @@ public class BukkitSocket {
     }
 
     public ResultContent bind(String playerId, long code) throws IOException {
-        logger.info("正在请求绑定：" + playerId + " => " + code);
+        logIfDebug("正在请求绑定：" + playerId + " => " + code);
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, new BindContent(playerId, code));
 
@@ -608,7 +640,7 @@ public class BukkitSocket {
     }
 
     public ResultContent executeInGroup(long group, String playerId, String command) throws IOException {
-        logger.info("正在请求以 " + playerId + " 身份在 QQ 群 " + group + " 中执行小明指令：" + command);
+        logIfDebug("正在请求以 " + playerId + " 身份在 QQ 群 " + group + " 中执行小明指令：" + command);
 
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, XiaomingCommandContent.groupCommandContent(group, playerId, command));
@@ -617,7 +649,7 @@ public class BukkitSocket {
     }
 
     public ResultContent executeInTemp(long group, String playerId, String command) throws IOException {
-        logger.info("正在请求以 " + playerId + " 身份在 QQ 群 " + group + " 中的临时会话内执行小明指令：" + command);
+        logIfDebug("正在请求以 " + playerId + " 身份在 QQ 群 " + group + " 中的临时会话内执行小明指令：" + command);
 
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, XiaomingCommandContent.tempCommandContent(group, playerId, command));
@@ -626,7 +658,7 @@ public class BukkitSocket {
     }
 
     public ResultContent executeInPrivate(String playerId, String command) throws IOException {
-        logger.info("正在请求以 " + playerId + " 身份在私聊中执行小明指令：" + command);
+        logIfDebug("正在请求以 " + playerId + " 身份在私聊中执行小明指令：" + command);
 
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, XiaomingCommandContent.privateCommandContent(playerId, command));
@@ -635,7 +667,7 @@ public class BukkitSocket {
     }
 
     public ResultContent apply(Player player, String command) throws IOException {
-        logger.info("正在申请使用指令：申请人：" + player.getName() + "，指令：" + command);
+        logIfDebug("正在申请使用指令：申请人：" + player.getName() + "，指令：" + command);
         final PlayerContent playerContent = PlayerUtils.forPlayer(player);
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, new ApplyCommandContent(playerContent, command));
@@ -645,13 +677,13 @@ public class BukkitSocket {
     }
 
     public Set<String> listServerTags() throws IOException {
-        logger.info("正在获取本服标记");
+        logIfDebug("正在获取本服标记");
         controller.sendLater(PackType.MC_LIST_SERVER_TAG);
         return controller.nextPack(PackType.XM_LIST_SERVER_TAG_RESULT).getContent(Set.class);
     }
 
     public ResultContent addServerTag(String tag) throws IOException {
-        logger.info("正在请求增加本服标记：" + tag);
+        logIfDebug("正在请求增加本服标记：" + tag);
         final int requestId = allocateRequestId();
         IdContent content = new IdContent(requestId, tag);
         controller.sendLater(PackType.MC_ADD_SERVER_TAG, content);
@@ -659,7 +691,7 @@ public class BukkitSocket {
     }
 
     public ResultContent removeServerTag(String tag) throws IOException {
-        logger.info("正在请求删除本服标记：" + tag);
+        logIfDebug("正在请求删除本服标记：" + tag);
         final int requestId = allocateRequestId();
         IdContent content = new IdContent(requestId, tag);
         controller.sendLater(PackType.MC_REMOVE_SERVER_TAG, content);
@@ -667,7 +699,7 @@ public class BukkitSocket {
     }
 
     public Set<String> listWorldTags(String worldName) throws IOException {
-        logger.info("正在获取世界 " + worldName + " 的标记");
+        logIfDebug("正在获取世界 " + worldName + " 的标记");
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, worldName);
         controller.sendLater(PackType.MC_LIST_WORLD_TAG, content);
@@ -675,7 +707,7 @@ public class BukkitSocket {
     }
 
     public ResultContent addWorldTag(String worldName, String tag) throws IOException {
-        logger.info("正在请求为世界 " + worldName + " 增加标记 " + tag);
+        logIfDebug("正在请求为世界 " + worldName + " 增加标记 " + tag);
         final int requestId = allocateRequestId();
         IdContent content = new IdContent(requestId, new WorldTagContent(worldName, tag));
         controller.sendLater(PackType.MC_ADD_WORLD_TAG, content);
@@ -683,7 +715,7 @@ public class BukkitSocket {
     }
 
     public ResultContent removeWorldTag(String worldName, String tag) throws IOException {
-        logger.info("正在请求删除世界 " + worldName + " 的标记 " + tag);
+        logIfDebug("正在请求删除世界 " + worldName + " 的标记 " + tag);
         final int requestId = allocateRequestId();
         IdContent content = new IdContent(requestId, new WorldTagContent(worldName, tag));
         controller.sendLater(PackType.MC_REMOVE_WORLD_TAG, content);
@@ -691,18 +723,18 @@ public class BukkitSocket {
     }
 
     public Set<String> listWorldNames() throws IOException {
-        logger.info("正在获取所有世界缓存");
+        logIfDebug("正在获取所有世界缓存");
         controller.sendLater(PackType.MC_LIST_WORLD);
         return controller.nextPack(PackType.XM_LIST_WORLD_RESULT).getContent(Set.class);
     }
 
     public void flushWorld() {
-        logger.info("正在请求刷新世界缓存");
+        logIfDebug("正在请求刷新世界缓存");
         controller.sendLater(PackType.MC_FLUSH_WORLD);
     }
 
     public void flush() {
-        logger.info("正在请求刷新所有缓存");
+        logIfDebug("正在请求刷新所有缓存");
         controller.sendLater(PackType.MC_FLUSH);
     }
 }

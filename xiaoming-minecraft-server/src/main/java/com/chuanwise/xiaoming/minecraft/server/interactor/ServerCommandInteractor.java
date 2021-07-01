@@ -4,15 +4,13 @@ import com.chuanwise.xiaoming.api.account.Account;
 import com.chuanwise.xiaoming.api.annotation.Filter;
 import com.chuanwise.xiaoming.api.annotation.FilterParameter;
 import com.chuanwise.xiaoming.api.annotation.Require;
-import com.chuanwise.xiaoming.api.contact.message.GroupMessage;
-import com.chuanwise.xiaoming.api.contact.message.Message;
-import com.chuanwise.xiaoming.api.exception.ReceptCancelledException;
-import com.chuanwise.xiaoming.api.user.GroupXiaomingUser;
 import com.chuanwise.xiaoming.api.user.PrivateXiaomingUser;
 import com.chuanwise.xiaoming.api.user.XiaomingUser;
 import com.chuanwise.xiaoming.api.util.*;
 import com.chuanwise.xiaoming.core.interactor.command.CommandInteractorImpl;
 import com.chuanwise.xiaoming.minecraft.server.XiaomingMinecraftPlugin;
+import com.chuanwise.xiaoming.minecraft.server.util.ServerWords;
+import com.chuanwise.xiaoming.minecraft.server.util.TargetUtils;
 import com.chuanwise.xiaoming.minecraft.util.Formatter;
 import com.chuanwise.xiaoming.minecraft.pack.content.*;
 import com.chuanwise.xiaoming.minecraft.server.configuration.*;
@@ -20,35 +18,15 @@ import com.chuanwise.xiaoming.minecraft.server.data.ServerPlayer;
 import com.chuanwise.xiaoming.minecraft.server.data.ServerPlayerData;
 import com.chuanwise.xiaoming.minecraft.server.server.BukkitPluginReceptionist;
 import com.chuanwise.xiaoming.minecraft.server.server.XiaomingMinecraftServer;
-import com.chuanwise.xiaoming.minecraft.util.CollectionUtils;
 import com.chuanwise.xiaoming.minecraft.util.ExceptionThrowableRunnable;
 import com.chuanwise.xiaoming.minecraft.util.StringUtils;
-import com.sun.org.apache.xerces.internal.impl.dv.util.Base64;
+import net.mamoe.mirai.message.code.MiraiCode;
 
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.*;
 
 public class ServerCommandInteractor extends CommandInteractorImpl {
-    static final String SERVER = "(服务器|server)";
-    static final String ONLINE = "(在线|online)";
-    static final String EXECUTE = "(执行|execute)";
-    static final String FORCE = "(强制|force)";
-    static final String CONSOLE = "(控制台|console)";
-    static final String CHANNEL = "(频道|channel)";
-    static final String HEAD = "(标志|头|head)";
-    static final String PLAYERS = "(玩家|players)";
-    static final String WORLD = "(世界|world)";
-    static final String BIND = "(绑定|bind)";
-    static final String DEFAULT = "(默认|default)";
-    static final String TARGET = "(目标|target)";
-    static final String FORMAT = "(格式|format)";
-    static final String UNBIND = "(解绑|解除绑定|unbind)";
-    static final String IDENTIFY = "(身份|凭据|identify)";
-    static final String CONNECTION = "(连接|connect|connection)";
-    static final String PORT = "(端口|port)";
-    static final String HISTORY = "(历史|记录|record|history)";
-
     final XiaomingMinecraftServer server;
     final ServerConfiguration configuration;
     final ServerPlayerData playerData;
@@ -60,12 +38,12 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         this.configuration = plugin.getConfiguration();
         this.playerData = plugin.getPlayerData();
 
-        enableUsageCommand(SERVER);
+        enableUsageCommand(ServerWords.SERVER);
     }
 
-    @Filter(CommandWords.SET + CommandWords.XIAOMING + IDENTIFY + " {remain}")
-    @Filter(CommandWords.EDIT + CommandWords.XIAOMING + IDENTIFY + " {remain}")
-    @Require("minecraft.server.world.tag.add")
+    @Filter(ServerWords.SET + ServerWords.XIAOMING + ServerWords.IDENTIFY + " {remain}")
+    @Filter(ServerWords.EDIT + ServerWords.XIAOMING + ServerWords.IDENTIFY + " {remain}")
+    @Require("minecraft.identify.set")
     public void onSetXiaomingIdentify(XiaomingUser user,
                                       @FilterParameter("remain") String identify) {
         configuration.setXiaomingIdentify(identify);
@@ -73,8 +51,36 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         getXiaomingBot().getScheduler().readySave(configuration);
     }
 
-    @Filter(CONNECTION + HISTORY)
-    @Filter(SERVER + CONNECTION + HISTORY)
+    @Filter(ServerWords.XIAOMING + ServerWords.IDENTIFY)
+    @Require("minecraft.identify.look")
+    public void onLookXiaomingIdentify(XiaomingUser user) {
+        user.sendMessage("当前的小明凭据为：" + configuration.getXiaomingIdentify());
+    }
+
+    @Filter(ServerWords.DEBUG + ServerWords.SERVER)
+    @Require("minecraft.debug")
+    public void onDebug(XiaomingUser user) {
+        configuration.setDebug(!configuration.isDebug());
+        getXiaomingBot().getScheduler().readySave(configuration);
+        if (configuration.isDebug()) {
+            user.sendMessage("已启动调试模式");
+        } else {
+            user.sendMessage("已关闭调试模式");
+        }
+    }
+
+    @Filter(ServerWords.TEST + ServerWords.SERVER + " {server}")
+    @Require("minecraft.test")
+    public void onTestServer(XiaomingUser user, @FilterParameter("server") BukkitPluginReceptionist receptionist) {
+        if (receptionist.test()) {
+            user.sendMessage("小明和该服务器连接正常");
+        } else {
+            user.sendError("无法连接到该服务器");
+        }
+    }
+
+    @Filter(ServerWords.CONNECTION + ServerWords.HISTORY)
+    @Filter(ServerWords.SERVER + ServerWords.CONNECTION + ServerWords.HISTORY)
     @Require("minecraft.history.list")
     public void onListConnectionHistory(XiaomingUser user) {
         final ConnectHistory connectHistory = plugin.getConnectHistory();
@@ -89,8 +95,8 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(CONNECTION + HISTORY + " {identifyOrName}")
-    @Filter(SERVER + CONNECTION + HISTORY + " {identifyOrName}")
+    @Filter(ServerWords.CONNECTION + ServerWords.HISTORY + " {identifyOrName}")
+    @Filter(ServerWords.SERVER + ServerWords.CONNECTION + ServerWords.HISTORY + " {identifyOrName}")
     @Require("minecraft.history.look")
     public void onLookConnectionHistory(XiaomingUser user, @FilterParameter("identifyOrName") String identifyOrName) {
         final ConnectHistory connectHistory = plugin.getConnectHistory();
@@ -111,8 +117,8 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(CommandWords.REMOVE + CONNECTION + HISTORY + " {identifyOrName}")
-    @Filter(CommandWords.REMOVE + SERVER + CONNECTION + HISTORY + " {identifyOrName}")
+    @Filter(ServerWords.REMOVE + ServerWords.CONNECTION + ServerWords.HISTORY + " {identifyOrName}")
+    @Filter(ServerWords.REMOVE + ServerWords.SERVER + ServerWords.CONNECTION + ServerWords.HISTORY + " {identifyOrName}")
     @Require("minecraft.history.remove")
     public void onRemoveConnectionHistory(XiaomingUser user, @FilterParameter("identifyOrName") String identifyOrName) {
         final ConnectHistory connectHistory = plugin.getConnectHistory();
@@ -141,8 +147,8 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功删除该服务器在 " + com.chuanwise.xiaoming.minecraft.util.TimeUtils.FORMAT.format(before) + " 之前的连接记录");
     }
 
-    @Filter(CommandWords.REMOVE + CONNECTION + HISTORY)
-    @Filter(CommandWords.REMOVE + SERVER + CONNECTION + HISTORY)
+    @Filter(ServerWords.REMOVE + ServerWords.CONNECTION + ServerWords.HISTORY)
+    @Filter(ServerWords.REMOVE + ServerWords.SERVER + ServerWords.CONNECTION + ServerWords.HISTORY)
     @Require("minecraft.history.remove")
     public void onRemoveConnectionHistory(XiaomingUser user) {
         final ConnectHistory connectHistory = plugin.getConnectHistory();
@@ -156,7 +162,28 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功删除所有服务器在 " + com.chuanwise.xiaoming.minecraft.util.TimeUtils.FORMAT.format(before) + " 之前的连接记录");
     }
 
-    @Filter(CommandWords.TAG + SERVER + WORLD + " {server} {world} {tag}")
+    @Filter(ServerWords.REMOVE + ServerWords.SERVER + " {server}")
+    @Require("minecraft.server.remove")
+    public void onRemoveServer(XiaomingUser user, @FilterParameter("server") MinecraftServerDetail detail) {
+        configuration.getServerDetails().remove(detail.getName());
+        final BukkitPluginReceptionist receptionist = server.forName(detail.getName());
+        if (Objects.nonNull(receptionist)) {
+            user.sendWarning("成功删除该服务器，并断开与之的连接");
+            receptionist.stop();
+        } else {
+            user.sendWarning("成功删除该服务器");
+        }
+        getXiaomingBot().getScheduler().readySave(configuration);
+    }
+
+    @Filter(ServerWords.DISCONNECT + ServerWords.SERVER + " {server}")
+    @Require("minecraft.link.disconnect")
+    public void onDisconnectServer(XiaomingUser user, @FilterParameter("server") BukkitPluginReceptionist receptionist) {
+        receptionist.stop();
+        user.sendMessage("已断开与该服的连接");
+    }
+
+    @Filter(ServerWords.TAG + ServerWords.SERVER + ServerWords.WORLD + " {server} {world} {tag}")
     @Require("minecraft.server.world.tag.add")
     public void onAddWorldTag(XiaomingUser user,
                               @FilterParameter("server") MinecraftServerDetail detail,
@@ -172,13 +199,13 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(BIND + CommandWords.MESSAGE + " {qq}")
+    @Filter(ServerWords.BIND + ServerWords.MESSAGE + " {qq}")
     @Require("minecraft.admin.bind.look")
     public void onLookBindMessage(XiaomingUser user, @FilterParameter("qq") ServerPlayer player) {
         user.sendMessage("该用户绑定的服务器 ID 为：" + player.getId());
     }
 
-    @Filter(CommandWords.REMOVE + CommandWords.TAG + WORLD + " {server} {world} {tag}")
+    @Filter(ServerWords.REMOVE + ServerWords.TAG + ServerWords.WORLD + " {server} {world} {tag}")
     @Require("minecraft.server.world.tag.remove")
     public void onRemoveWorldTag(XiaomingUser user,
                                  @FilterParameter("server") MinecraftServerDetail detail,
@@ -198,14 +225,14 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(WORLD + CommandWords.TAG + " {server} {world}")
+    @Filter(ServerWords.WORLD + ServerWords.TAG + " {server} {world}")
     @Require("minecraft.server.world.tag.look")
     public void onLookWorldTags(XiaomingUser user,
                                 @FilterParameter("server") MinecraftServerDetail detail,
                                 @FilterParameter("world") String worldName) {
         final Set<String> strings = detail.getWorldTags().get(worldName);
         if (CollectionUtils.isEmpty(strings)) {
-            final BukkitPluginReceptionist receptionist = server.forReceptionist(detail.getName());
+            final BukkitPluginReceptionist receptionist = server.forName(detail.getName());
 
             if (Objects.nonNull(receptionist)) {
                 user.sendError("该服务器上并没有这个世界");
@@ -217,17 +244,17 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(SERVER + PORT)
-    @Filter(PORT)
+    @Filter(ServerWords.SERVER + ServerWords.PORT)
+    @Filter(ServerWords.PORT)
     @Require("minecraft.port.look")
     public void onLookWorldTags(XiaomingUser user) {
         user.sendMessage("当前服务器端口：" + server.getPort());
     }
 
-    @Filter(CommandWords.SET + PORT + " {port}")
-    @Filter(CommandWords.EDIT + PORT + " {port}")
-    @Filter(CommandWords.SET + SERVER + PORT + " {port}")
-    @Filter(CommandWords.EDIT + SERVER + PORT + " {port}")
+    @Filter(ServerWords.SET + ServerWords.PORT + " {port}")
+    @Filter(ServerWords.EDIT + ServerWords.PORT + " {port}")
+    @Filter(ServerWords.SET + ServerWords.SERVER + ServerWords.PORT + " {port}")
+    @Filter(ServerWords.EDIT + ServerWords.SERVER + ServerWords.PORT + " {port}")
     @Require("minecraft.port.set")
     public void onLookWorldTags(XiaomingUser user, @FilterParameter("port") String portString) {
         final int port;
@@ -249,7 +276,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(WORLD + CommandWords.TAG + " {server}")
+    @Filter(ServerWords.WORLD + ServerWords.TAG + " {server}")
     @Require("minecraft.server.world.tag.look")
     public void onLookWorldTags(XiaomingUser user,
                                 @FilterParameter("server") MinecraftServerDetail detail) {
@@ -263,7 +290,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(ONLINE + SERVER)
+    @Filter(ServerWords.ONLINE + ServerWords.SERVER)
     @Require("minecraft.list")
     public void onListOnlineServer(XiaomingUser user) {
         final List<BukkitPluginReceptionist> receptionists = server.getReceptionists();
@@ -278,7 +305,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(SERVER)
+    @Filter(ServerWords.SERVER)
     @Require("minecraft.list")
     public void onListServer(XiaomingUser user) {
         final Map<String, MinecraftServerDetail> serverDetails = configuration.getServerDetails();
@@ -289,7 +316,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(SERVER + " {server}")
+    @Filter(ServerWords.SERVER + " {server}")
     @Require("minecraft.look")
     public void onLookServer(XiaomingUser user, @FilterParameter("server") MinecraftServerDetail detail) {
         if (user instanceof PrivateXiaomingUser) {
@@ -299,10 +326,10 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(CommandWords.ADD + SERVER + " {name}")
-    @Filter(CommandWords.NEW + SERVER + " {name}")
-    @Filter(CommandWords.ADD + SERVER + " {name} {identify}")
-    @Filter(CommandWords.NEW + SERVER + " {name} {identify}")
+    @Filter(ServerWords.ADD + ServerWords.SERVER + " {name}")
+    @Filter(ServerWords.NEW + ServerWords.SERVER + " {name}")
+    @Filter(ServerWords.ADD + ServerWords.SERVER + " {name} {identify}")
+    @Filter(ServerWords.NEW + ServerWords.SERVER + " {name} {identify}")
     @Require("minecraft.server.add")
     public void onAddServer(XiaomingUser user, @FilterParameter("identify") String identify, @FilterParameter("name") String name) {
         final Map<String, MinecraftServerDetail> serverDetails = configuration.getServerDetails();
@@ -323,8 +350,8 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(CommandWords.ADD + CommandWords.GROUP + CHANNEL + " {channel}")
-    @Filter(CommandWords.NEW + CommandWords.GROUP + CHANNEL + " {channel}")
+    @Filter(ServerWords.ADD + ServerWords.GROUP + ServerWords.CHANNEL + " {channel}")
+    @Filter(ServerWords.NEW + ServerWords.GROUP + ServerWords.CHANNEL + " {channel}")
     @Require("minecraft.channel.group.add")
     public void onAddGroupChannel(XiaomingUser user, @FilterParameter("channel") String name) {
         final ChatSettings chatSettings = configuration.getChatSettings();
@@ -348,38 +375,45 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功创建群聊频道「" + channel.getName() + "」，详情如下：\n" + getChannelSummary(channel));
     }
 
-    @Filter(CommandWords.SET + CommandWords.GROUP + CHANNEL + FORMAT + " {channel} {remain}")
-    @Filter(CommandWords.EDIT + CommandWords.GROUP + CHANNEL + FORMAT + " {channel} {remain}")
-    @Filter(CommandWords.SET + CommandWords.GROUP + CHANNEL + CommandWords.MESSAGE + FORMAT + " {channel} {remain}")
-    @Filter(CommandWords.EDIT + CommandWords.GROUP + CHANNEL + CommandWords.MESSAGE + FORMAT + " {channel} {remain}")
+    @Filter(ServerWords.SET + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.FORMAT + " {channel} {remain}")
+    @Filter(ServerWords.EDIT + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.FORMAT + " {channel} {remain}")
+    @Filter(ServerWords.SET + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.MESSAGE + ServerWords.FORMAT + " {channel} {remain}")
+    @Filter(ServerWords.EDIT + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.MESSAGE + ServerWords.FORMAT + " {channel} {remain}")
     @Require("minecraft.channel.group.format.set")
     public void onSetGroupChannelFormat(XiaomingUser user, @FilterParameter("channel") GroupChannel channel, @FilterParameter("remain") String format) {
-        if (StringUtils.isEmpty(format)) {
-            user.sendError("消息格式不能为空");
-        } else {
-            channel.setFormat(format);
-            getXiaomingBot().getScheduler().readySave(configuration);
-            user.sendMessage("成功设置群聊频道消息格式");
-        }
+        channel.setFormat(format);
+        getXiaomingBot().getScheduler().readySave(configuration);
+        user.sendMessage("成功设置群聊频道消息格式");
     }
 
-    @Filter(CommandWords.SET + SERVER + CHANNEL + FORMAT + " {channel} {remain}")
-    @Filter(CommandWords.EDIT + SERVER + CHANNEL + FORMAT + " {channel} {remain}")
-    @Filter(CommandWords.SET + SERVER + CHANNEL + CommandWords.MESSAGE + FORMAT + " {channel} {remain}")
-    @Filter(CommandWords.EDIT + SERVER + CHANNEL + CommandWords.MESSAGE + FORMAT + " {channel} {remain}")
+    @Filter(ServerWords.SET + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.FORMAT + " {channel} {remain}")
+    @Filter(ServerWords.EDIT + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.FORMAT + " {channel} {remain}")
+    @Filter(ServerWords.SET + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.MESSAGE + ServerWords.FORMAT + " {channel} {remain}")
+    @Filter(ServerWords.EDIT + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.MESSAGE + ServerWords.FORMAT + " {channel} {remain}")
     @Require("minecraft.channel.server.format.set")
     public void onSetServerChannelFormat(XiaomingUser user, @FilterParameter("channel") MinecraftChannel channel, @FilterParameter("remain") String format) {
-        if (StringUtils.isEmpty(format)) {
+        channel.setFormat(format);
+        getXiaomingBot().getScheduler().readySave(configuration);
+        user.sendMessage("成功设置服务器频道消息格式");
+    }
+
+    @Filter(ServerWords.SET + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.HEAD + " {channel} {head}")
+    @Filter(ServerWords.EDIT + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.HEAD + " {channel} {head}")
+    @Filter(ServerWords.SET + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.MESSAGE + ServerWords.HEAD + " {channel} {head}")
+    @Filter(ServerWords.EDIT + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.MESSAGE + ServerWords.HEAD + " {channel} {head}")
+    @Require("minecraft.channel.server.head.set")
+    public void onSetServerChannelHead(XiaomingUser user, @FilterParameter("channel") MinecraftChannel channel, @FilterParameter("head") String head) {
+        if (StringUtils.isEmpty(head)) {
             user.sendError("消息格式不能为空");
         } else {
-            channel.setFormat(format);
+            channel.setHead(head);
             getXiaomingBot().getScheduler().readySave(configuration);
-            user.sendMessage("成功设置服务器频道消息格式");
+            user.sendMessage("成功设置服务器频道消息标志");
         }
     }
 
-    @Filter(CommandWords.SET + CommandWords.GROUP + CHANNEL + CommandWords.TAG + " {channel} {tag}")
-    @Filter(CommandWords.EDIT + CommandWords.GROUP + CHANNEL + CommandWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.SET + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.EDIT + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.TAG + " {channel} {tag}")
     @Require("minecraft.channel.group.groupTag.set")
     public void onSetGroupChannelGroupTag(XiaomingUser user, @FilterParameter("channel") GroupChannel channel, @FilterParameter("tag") String tag) {
         channel.setGroupTag(tag);
@@ -387,29 +421,29 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功设置群聊频道「{channel}」的关联群标记为「{tag}」");
     }
 
-    @Filter(CommandWords.GROUP + CHANNEL + CommandWords.TAG + " {channel}")
+    @Filter(ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.TAG + " {channel}")
     @Require("minecraft.channel.group.groupTag.look")
     public void onLookGroupChannelGroupTag(XiaomingUser user, @FilterParameter("channel") GroupChannel channel) {
         user.sendMessage("群聊频道「{channel}」的关联群标记为「" + channel.getGroupTag() + "」");
     }
 
-    @Filter(CommandWords.SET + CommandWords.GROUP + CHANNEL + HEAD + " {channel} {head}")
-    @Filter(CommandWords.EDIT + CommandWords.GROUP + CHANNEL + HEAD + " {channel} {head}")
-    @Require("minecraft.channel.group.groupTag.set")
+    @Filter(ServerWords.SET + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.HEAD + " {channel} {head}")
+    @Filter(ServerWords.EDIT + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.HEAD + " {channel} {head}")
+    @Require("minecraft.channel.group.head.set")
     public void onSetGroupChannelHead(XiaomingUser user, @FilterParameter("channel") GroupChannel channel, @FilterParameter("head") String head) {
         channel.setHead(head);
         getXiaomingBot().getScheduler().readySave(configuration);
         user.sendMessage("成功设置群聊频道「{channel}」的消息头为「{tag}」");
     }
 
-    @Filter(CommandWords.GROUP + CHANNEL + HEAD + " {channel}")
+    @Filter(ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.HEAD + " {channel}")
     @Require("minecraft.channel.group.groupTag.look")
     public void onLookGroupChannelHead(XiaomingUser user, @FilterParameter("channel") GroupChannel channel) {
         user.sendMessage("群聊频道「{channel}」的消息头为「" + channel.getHead() + "」");
     }
 
-    @Filter(CommandWords.SET + SERVER + CHANNEL + WORLD + CommandWords.TAG + " {channel} {tag}")
-    @Filter(CommandWords.EDIT + SERVER + CHANNEL + WORLD + CommandWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.SET + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.WORLD + ServerWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.EDIT + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.WORLD + ServerWords.TAG + " {channel} {tag}")
     @Require("minecraft.channel.server.worldTag.set")
     public void onSetServerChannelWorldTag(XiaomingUser user, @FilterParameter("channel") MinecraftChannel channel, @FilterParameter("tag") String tag) {
         channel.setWorldTag(tag);
@@ -417,8 +451,8 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功设置服务器频道「{channel}」的世界标记为「{tag}」");
     }
 
-    @Filter(CommandWords.SET + SERVER + CHANNEL + SERVER + CommandWords.TAG + " {channel} {tag}")
-    @Filter(CommandWords.EDIT + SERVER + CHANNEL + SERVER + CommandWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.SET + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.SERVER + ServerWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.EDIT + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.SERVER + ServerWords.TAG + " {channel} {tag}")
     @Require("minecraft.channel.server.serverTag.set")
     public void onSetServerChannelServerTag(XiaomingUser user, @FilterParameter("channel") MinecraftChannel channel, @FilterParameter("tag") String tag) {
         channel.setServerTag(tag);
@@ -426,14 +460,41 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功设置服务器频道「{channel}」的服务器标记为「{tag}」");
     }
 
-    @Filter(SERVER + CHANNEL + SERVER + CommandWords.TAG + " {channel}")
+    @Filter(ServerWords.SET + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.SERVER + ServerWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.EDIT + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.SERVER + ServerWords.TAG + " {channel} {tag}")
+    @Require("minecraft.channel.group.serverTag.set")
+    public void onSetGroupChannelServerTag(XiaomingUser user, @FilterParameter("channel") GroupChannel channel, @FilterParameter("tag") String tag) {
+        channel.setServerTag(tag);
+        getXiaomingBot().getScheduler().readySave(configuration);
+        user.sendMessage("成功设置群聊频道「{channel}」的服务器标记为「{tag}」");
+    }
+
+    @Filter(ServerWords.SET + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.WORLD + ServerWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.EDIT + ServerWords.GROUP + ServerWords.CHANNEL + ServerWords.WORLD + ServerWords.TAG + " {channel} {tag}")
+    @Require("minecraft.channel.group.worldTag.set")
+    public void onSetGroupChannelWorldTag(XiaomingUser user, @FilterParameter("channel") GroupChannel channel, @FilterParameter("tag") String tag) {
+        channel.setWorldTag(tag);
+        getXiaomingBot().getScheduler().readySave(configuration);
+        user.sendMessage("成功设置群聊频道「{channel}」的世界标记为「{tag}」");
+    }
+
+    @Filter(ServerWords.SET + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.GROUP + ServerWords.TAG + " {channel} {tag}")
+    @Filter(ServerWords.EDIT + ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.GROUP + ServerWords.TAG + " {channel} {tag}")
+    @Require("minecraft.channel.server.groupTag.set")
+    public void onSetServerChannelGroupTag(XiaomingUser user, @FilterParameter("channel") MinecraftChannel channel, @FilterParameter("tag") String tag) {
+        channel.setGroupTag(tag);
+        getXiaomingBot().getScheduler().readySave(configuration);
+        user.sendMessage("成功设置服务器频道「{channel}」的群聊标记为「{tag}」");
+    }
+
+    @Filter(ServerWords.SERVER + ServerWords.CHANNEL + ServerWords.SERVER + ServerWords.TAG + " {channel}")
     @Require("minecraft.channel.server.serverTag.look")
     public void onLookServerChannelServerTag(XiaomingUser user, @FilterParameter("channel") MinecraftChannel channel) {
         user.sendMessage("服务器频道「{channel}」的服务器标记为「" + channel.getServerTag() + "」");
     }
 
-    @Filter(CommandWords.ADD + SERVER + CHANNEL + " {channel}")
-    @Filter(CommandWords.NEW + SERVER + CHANNEL + " {channel}")
+    @Filter(ServerWords.ADD + ServerWords.SERVER + ServerWords.CHANNEL + " {channel}")
+    @Filter(ServerWords.NEW + ServerWords.SERVER + ServerWords.CHANNEL + " {channel}")
     @Require("minecraft.channel.server.add")
     public void onAddMinecraftChannel(XiaomingUser user, @FilterParameter("channel") String name) {
         final ChatSettings chatSettings = configuration.getChatSettings();
@@ -460,7 +521,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功创建服务器频道「" + channel.getName() + "」，详情如下：\n" + getChannelSummary(channel));
     }
 
-    @Filter(CommandWords.REMOVE + CommandWords.GROUP + CHANNEL + " {channel}")
+    @Filter(ServerWords.REMOVE + ServerWords.GROUP + ServerWords.CHANNEL + " {channel}")
     @Require("minecraft.channel.group.remove")
     public void onRemoveGroupChannel(XiaomingUser user, @FilterParameter("channel") GroupChannel channel) {
         final ChatSettings chatSettings = configuration.getChatSettings();
@@ -470,7 +531,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功删除群聊频道「{channel}」");
     }
 
-    @Filter(CommandWords.REMOVE + SERVER + CHANNEL + " {channel}")
+    @Filter(ServerWords.REMOVE + ServerWords.SERVER + ServerWords.CHANNEL + " {channel}")
     @Require("minecraft.channel.server.remove")
     public void onRemoveMinecraftChannel(XiaomingUser user, @FilterParameter("channel") MinecraftChannel channel) {
         final ChatSettings chatSettings = configuration.getChatSettings();
@@ -480,7 +541,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功删除服务器频道「{channel}」");
     }
 
-    @Filter(SERVER + CHANNEL)
+    @Filter(ServerWords.SERVER + ServerWords.CHANNEL)
     @Require("minecraft.channel.server.list")
     public void onListServerChannel(XiaomingUser user) {
         final ChatSettings chatSettings = configuration.getChatSettings();
@@ -493,19 +554,19 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(SERVER + CHANNEL + " {channel}")
+    @Filter(ServerWords.SERVER + ServerWords.CHANNEL + " {channel}")
     @Require("minecraft.channel.server.look")
     public void onLookServerChannel(XiaomingUser user, @FilterParameter("channel") MinecraftChannel channel) {
         user.sendMessage("服务器频道详情：\n" + getChannelSummary(channel));
     }
 
-    @Filter(CommandWords.GROUP + CHANNEL + " {channel}")
+    @Filter(ServerWords.GROUP + ServerWords.CHANNEL + " {channel}")
     @Require("minecraft.channel.group.look")
     public void onLookGroupChannel(XiaomingUser user, @FilterParameter("channel") GroupChannel channel) {
         user.sendMessage("群聊频道详情：\n" + getChannelSummary(channel));
     }
 
-    @Filter(CommandWords.GROUP + CHANNEL)
+    @Filter(ServerWords.GROUP + ServerWords.CHANNEL)
     @Require("minecraft.channel.group.list")
     public void onListGroupChannel(XiaomingUser user) {
         final ChatSettings chatSettings = configuration.getChatSettings();
@@ -524,6 +585,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         return "频道名：" + channel.getName() + "\n" +
                 "消息标志：" + channel.getHead() + "\n" +
                 "消息格式：" + channel.getFormat() + "\n" +
+                "关联群：" + channel.getGroupTag() + "\n" +
                 "关联服务器：" + channel.getServerTag() + ("（" + configuration.forServerTag(channel.getServerTag()).size() + " 个）") + "\n" +
                 "关联世界：" + channel.getWorldTag();
     }
@@ -532,14 +594,16 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         return "频道名：" + channel.getName() + "\n" +
                 "消息标志：" + channel.getHead() + "\n" +
                 "消息格式：" + channel.getFormat() + "\n" +
-                "相关群：" + channel.getGroupTag() + ("（" + getXiaomingBot().getResponseGroupManager().forTag(channel.getGroupTag()).size() + " 个）");
+                "相关群：" + channel.getGroupTag() + ("（" + getXiaomingBot().getResponseGroupManager().forTag(channel.getGroupTag()).size() + " 个）") + "\n" +
+                "相关服务器：" + channel.getServerTag() + "\n" +
+                "相关世界：" + channel.getServerTag();
     }
 
-    @Filter(ONLINE + PLAYERS)
-    @Filter(ONLINE + "(人数|people)")
+    @Filter(ServerWords.ONLINE + ServerWords.PLAYERS)
+    @Filter(ServerWords.ONLINE + ServerWords.POPULATION)
     @Require("minecraft.user.onlinePlayers")
     public void onOnlinePlayers(XiaomingUser user) {
-        final BukkitPluginReceptionist target = requireTarget(user);
+        final BukkitPluginReceptionist target = TargetUtils.requireTarget(user);
 
         getXiaomingBot().getScheduler().run(() -> {
             runOrCatch(user, target, () -> {
@@ -554,10 +618,30 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         });
     }
 
-    @Filter(WORLD)
+    @Filter(ServerWords.ALL + ServerWords.SERVER + ServerWords.ONLINE + ServerWords.PLAYERS)
+    @Filter(ServerWords.ALL + ServerWords.SERVER + ServerWords.ONLINE + ServerWords.POPULATION)
+    @Require("minecraft.user.onlinePlayers")
+    public void onAllOnlinePlayers(XiaomingUser user) {
+        List<String> onlinePlayers = new ArrayList<>();
+        for (BukkitPluginReceptionist receptionist : server.getReceptionists()) {
+            runOrCatch(user, receptionist, () -> {
+                final Set<PlayerContent> playerContents = receptionist.listOnlinePlayers();
+                CollectionUtils.addTo(playerContents, onlinePlayers, PlayerContent::getPlayerListName);
+            });
+        }
+        if (onlinePlayers.isEmpty()) {
+            user.sendWarning("服务器一个人都没有");
+        } else {
+            Collections.sort(onlinePlayers);
+            user.sendMessage("所有服务器有 " + onlinePlayers.size() + " 人在线：\n" +
+                    Formatter.clearColors(CollectionUtils.getIndexSummary(onlinePlayers)));
+        }
+    }
+
+    @Filter(ServerWords.WORLD)
     @Require("minecraft.worldNames")
     public void onWorldNames(XiaomingUser user) {
-        final BukkitPluginReceptionist target = requireTarget(user);
+        final BukkitPluginReceptionist target = TargetUtils.requireTarget(user);
         getXiaomingBot().getScheduler().run(() -> {
             runOrCatch(user, target, () -> {
                 final Set<String> worldsNames = target.listWorldsNames();
@@ -570,7 +654,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         });
     }
 
-    @Filter(CommandWords.ENABLE + SERVER)
+    @Filter(ServerWords.ENABLE + ServerWords.SERVER)
     @Require("minecraft.enable")
     public void onEnableServer(XiaomingUser user) {
         if (server.isRunning()) {
@@ -585,7 +669,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter("(重新|重|re)" + CommandWords.ENABLE + SERVER)
+    @Filter("(重新|重|re)" + ServerWords.ENABLE + ServerWords.SERVER)
     @Require("minecraft.reenable")
     public void onReenableServer(XiaomingUser user) {
         if (!server.isRunning()) {
@@ -601,7 +685,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(CommandWords.DISABLE + SERVER)
+    @Filter(ServerWords.DISABLE + ServerWords.SERVER)
     @Require("minecraft.disable")
     public void onDisableServer(XiaomingUser user) {
         if (!server.isRunning()) {
@@ -616,10 +700,10 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(CONSOLE + EXECUTE + " {remain}")
+    @Filter(ServerWords.CONSOLE + ServerWords.EXECUTE + " {remain}")
     @Require("minecraft.admin.execute")
     public void onExecuteAsConsole(XiaomingUser user, @FilterParameter("remain") String command) {
-        final BukkitPluginReceptionist target = requireTarget(user);
+        final BukkitPluginReceptionist target = TargetUtils.requireTarget(user);
         if (StringUtils.isEmpty(command)) {
             user.sendError("指令内容不能为空");
             return;
@@ -627,16 +711,16 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
 
         getXiaomingBot().getScheduler().run(() -> {
             runOrCatch(user, target, () -> {
-                final String discription = Formatter.clearColors(target.executeAsConsole(command).getDescription("指令执行"));
+                final String discription = Formatter.clearColors(target.executeAsConsole(MiraiCode.deserializeMiraiCode(command).contentToString()).getDescription("指令执行"));
                 user.sendMessage(discription);
             });
         });
     }
 
-    @Filter(EXECUTE + " {remain}")
+    @Filter(ServerWords.EXECUTE + " {remain}")
     @Require("minecraft.admin.execute")
     public void onExecuteAsPlayer(XiaomingUser user, @FilterParameter("remain") String command) {
-        final BukkitPluginReceptionist target = requireTarget(user);
+        final BukkitPluginReceptionist target = TargetUtils.requireTarget(user);
 
         final ServerPlayer serverPlayer = playerData.forPlayer(user.getCode());
         if (Objects.isNull(serverPlayer)) {
@@ -650,16 +734,16 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
 
         getXiaomingBot().getScheduler().run(() -> {
             runOrCatch(user, target, () -> {
-                final String discription = Formatter.clearColors(target.executeAsPlayer(serverPlayer.getId(), command).getDescription("指令执行"));
+                final String discription = Formatter.clearColors(target.executeAsPlayer(serverPlayer.getId(), MiraiCode.deserializeMiraiCode(command).contentToString()).getDescription("指令执行"));
                 user.sendMessage(discription);
             });
         });
     }
 
-    @Filter(FORCE + EXECUTE + " {qq} {remain}")
+    @Filter(ServerWords.FORCE + ServerWords.EXECUTE + " {qq} {remain}")
     @Require("minecraft.admin.execute")
     public void onExecuteAsOthers(XiaomingUser user, @FilterParameter("qq") ServerPlayer player, @FilterParameter("remain") String command) {
-        final BukkitPluginReceptionist target = requireTarget(user);
+        final BukkitPluginReceptionist target = TargetUtils.requireTarget(user);
         if (StringUtils.isEmpty(command)) {
             user.sendError("指令内容不能为空");
             return;
@@ -667,13 +751,13 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
 
         getXiaomingBot().getScheduler().run(() -> {
             runOrCatch(user, target, () -> {
-                final String discription = Formatter.clearColors(target.executeAsPlayer(player.getId(), command).getDescription("强制执行指令"));
+                final String discription = Formatter.clearColors(target.executeAsPlayer(player.getId(), MiraiCode.deserializeMiraiCode(command).contentToString()).getDescription("强制执行指令"));
                 user.sendMessage(discription);
             });
         });
     }
 
-    @Filter(UNBIND)
+    @Filter(ServerWords.UNBIND)
     @Require("minecraft.user.unbind")
     public void onUnbind(XiaomingUser user) {
         final ServerPlayer serverPlayer = playerData.forPlayer(user.getCode());
@@ -686,7 +770,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(UNBIND + " {qq}")
+    @Filter(ServerWords.UNBIND + " {qq}")
     @Require("minecraft.admin.unbind")
     public void onUnbind(XiaomingUser user, @FilterParameter("qq") ServerPlayer player) {
         playerData.unbind(player.getCode());
@@ -694,7 +778,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功解除「" + getXiaomingBot().getAccountManager().getAliasAndCode(player.getCode()) + "」" + "和「" + player.getId() + "」之间的绑定");
     }
 
-    @Filter(BIND + " {player}")
+    @Filter(ServerWords.BIND + " {player}")
     @Require("minecraft.user.bind")
     public void onBind(XiaomingUser user, @FilterParameter("player") String playerId) {
         final ServerPlayer elderBind = playerData.forPlayer(user.getCode());
@@ -757,7 +841,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(CommandWords.TAG + SERVER + " {server} {tag}")
+    @Filter(ServerWords.TAG + ServerWords.SERVER + " {server} {tag}")
     @Require("minecraft.server.tag.add")
     public void onAddServerTag(XiaomingUser user, @FilterParameter("server") MinecraftServerDetail detail, @FilterParameter("tag") String tag) {
         if (detail.hasTag(tag)) {
@@ -769,7 +853,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(CommandWords.REMOVE + SERVER + CommandWords.TAG + " {server} {tag}")
+    @Filter(ServerWords.REMOVE + ServerWords.SERVER + ServerWords.TAG + " {server} {tag}")
     @Require("minecraft.server.tag.remove")
     public void onRemoveServerTag(XiaomingUser user, @FilterParameter("server") MinecraftServerDetail detail, @FilterParameter("tag") String tag) {
         if (Arrays.asList(detail.getName(), "recorded").contains(tag)) {
@@ -785,7 +869,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         }
     }
 
-    @Filter(BIND + " {qq} {player}")
+    @Filter(ServerWords.BIND + " {qq} {player}")
     @Require("minecraft.admin.bind")
     public void onBind(XiaomingUser user, @FilterParameter("qq") long qq, @FilterParameter("player") String newId) {
         final ServerPlayer sameNamePlayer = playerData.forPlayer(newId);
@@ -804,64 +888,33 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
         user.sendMessage("成功将该用户的 ID 绑定到「{player}」");
     }
 
-    final String SERVER_TARGET_TAG = "minecraft-target";
-
-    @Filter(DEFAULT + TARGET)
+    @Filter(ServerWords.DEFAULT + ServerWords.TARGET + ServerWords.SERVER)
     @Require("minecraft.user.target.look")
     public void onDefaultTarget(XiaomingUser user) {
-        final BukkitPluginReceptionist target = getTarget(user);
-        if (Objects.isNull(target)) {
-            user.sendMessage("无在线的目标服务器");
-        } else {
-            user.sendMessage("目标服务器为：" + target.getDetail().getName());
-        }
+        user.sendMessage("默认目标服务器为：" + configuration.getDefaultTarget());
     }
 
-    @Filter(CommandWords.SET + DEFAULT + TARGET + " {server}")
+    @Filter(ServerWords.PERSONAL + ServerWords.TARGET + ServerWords.SERVER)
+    @Require("minecraft.user.target.look")
+    public void onMyTarget(XiaomingUser user) {
+        final String userTarget = user.getPropertyOrDefault(TargetUtils.SERVER_TARGET_TAG, configuration.getDefaultTarget());
+        user.sendMessage("你的目标服务器为：" + userTarget);
+    }
+
+    @Filter(ServerWords.SET + ServerWords.TARGET + ServerWords.SERVER + " {server}")
+    @Require("minecraft.user.target.set")
+    public void onSetTarget(XiaomingUser user, @FilterParameter("server") BukkitPluginReceptionist receptionist) {
+        final String name = receptionist.getDetail().getName();
+        user.setProperty(TargetUtils.SERVER_TARGET_TAG, name);
+        user.sendMessage("成功设置你的目标服务器为「" + name + "」");
+    }
+
+    @Filter(ServerWords.SET + ServerWords.DEFAULT + ServerWords.TARGET + ServerWords.SERVER + " {server}")
     @Require("minecraft.user.target.set")
     public void onSetDefaultTarget(XiaomingUser user, @FilterParameter("server") BukkitPluginReceptionist receptionist) {
         final String name = receptionist.getDetail().getName();
-        user.setProperty(SERVER_TARGET_TAG, name);
-        user.sendMessage("成功设置目标服务器为「" + name + "」");
-    }
-
-    public BukkitPluginReceptionist getTarget(XiaomingUser user) {
-        final List<BukkitPluginReceptionist> receptionists = server.getReceptionists();
-        if (receptionists.isEmpty()) {
-            return null;
-        } else if (receptionists.size() == 1) {
-            return receptionists.get(0);
-        } else {
-            final String targetName;
-            final Object target = user.getProperty(SERVER_TARGET_TAG);
-            if (target instanceof String) {
-                targetName = ((String) target);
-            } else {
-                targetName = configuration.getDefaultTarget();
-            }
-
-            return server.forReceptionist(targetName);
-        }
-    }
-
-    public BukkitPluginReceptionist requireTarget(XiaomingUser user) {
-        if (server.getReceptionists().isEmpty()) {
-            user.sendError("没有任何服务器连接到小明，操作失败");
-            throw new ReceptCancelledException();
-        } else {
-            BukkitPluginReceptionist target = getTarget(user);
-            if (Objects.isNull(target)) {
-                user.sendMessage("你的目标服务器不在线，告诉小明新的目标服务器名吧，或用「退出」取消操作");
-                final String targetnName = InteractorUtils.waitNextLegalInput(user, string -> {
-                    return Objects.nonNull(server.forReceptionist(string));
-                }, "该服务器不在线").serialize();
-                user.setProperty(SERVER_TARGET_TAG, targetnName);
-
-                target = server.forReceptionist(targetnName);
-            }
-
-            return target;
-        }
+        configuration.setDefaultTarget(name);
+        user.sendMessage("成功设置所有人的目标服务器为「" + name + "」");
     }
 
     public String getServerDetailString(MinecraftServerDetail detail) {
@@ -892,35 +945,35 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
     }
 
     @Override
-    public <T> Object onParameter(XiaomingUser user, Class<T> clazz, String parameterName, String currentValue, String defaultValue) {
-        final Object result = super.onParameter(user, clazz, parameterName, currentValue, defaultValue);
+    public <T> T onParameter(XiaomingUser user, Class<T> clazz, String parameterName, String currentValue, String defaultValue) {
+        Object result = super.onParameter(user, clazz, parameterName, currentValue, defaultValue);
         if (Objects.nonNull(result)) {
-            return result;
+            return ((T) result);
         }
 
         if (clazz.isAssignableFrom(MinecraftServerDetail.class) && Objects.equals(parameterName, "server")) {
             final MinecraftServerDetail minecraftServerConfiguration = configuration.forServerName(currentValue);
             if (Objects.nonNull(minecraftServerConfiguration)) {
-                return minecraftServerConfiguration;
+                result = minecraftServerConfiguration;
             } else {
                 user.sendError("没有叫做「{server}」的服务器哦");
-                return null;
+                result = null;
             }
         } else if (clazz.isAssignableFrom(BukkitPluginReceptionist.class) && Objects.equals(parameterName, "server")) {
-            final BukkitPluginReceptionist bukkitPluginReceptionist = server.forReceptionist(currentValue);
+            final BukkitPluginReceptionist bukkitPluginReceptionist = server.forName(currentValue);
             if (Objects.isNull(bukkitPluginReceptionist)) {
                 user.sendError("该服务器并没有连接到小明哦");
-                return null;
+                result = null;
             } else {
-                return bukkitPluginReceptionist;
+                result = bukkitPluginReceptionist;
             }
         } else if (clazz.isAssignableFrom(ServerPlayer.class) && Objects.equals(parameterName, "player")) {
             final ServerPlayer serverPlayer = playerData.forPlayer(currentValue);
             if (Objects.nonNull(serverPlayer)) {
-                return serverPlayer;
+                result = serverPlayer;
             } else {
                 user.sendError("该用户并没有账户绑定到 ID「{player}」上哦");
-                return null;
+                result = null;
             }
         } else if (clazz.isAssignableFrom(ServerPlayer.class) && Objects.equals(parameterName, "qq")) {
             final long qq = AtUtils.parseQQ(currentValue);
@@ -929,32 +982,32 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
             } else {
                 final ServerPlayer serverPlayer = playerData.forPlayer(qq);
                 if (Objects.nonNull(serverPlayer)) {
-                    return serverPlayer;
+                    result = serverPlayer;
                 } else {
                     user.sendError("该用户没有绑定 ID 呢");
-                    return null;
+                    result = null;
                 }
             }
         } else if (clazz.isAssignableFrom(MinecraftChannel.class) && Objects.equals(parameterName, "channel")) {
             final ChatSettings chatSettings = configuration.getChatSettings();
             final MinecraftChannel minecraftChannel = chatSettings.forMinecraftChannel(currentValue);
             if (Objects.nonNull(minecraftChannel)) {
-                return minecraftChannel;
+                result = minecraftChannel;
             } else {
                 user.sendError("找不到名为「{channel}」的服务器频道");
-                return null;
+                result = null;
             }
         } else if (clazz.isAssignableFrom(GroupChannel.class) && Objects.equals(parameterName, "channel")) {
             final ChatSettings chatSettings = configuration.getChatSettings();
             final GroupChannel groupChannel = chatSettings.forGroupChannel(currentValue);
             if (Objects.nonNull(groupChannel)) {
-                return groupChannel;
+                result = groupChannel;
             } else {
                 user.sendError("找不到名为「{channel}」的群聊频道");
-                return null;
+                result = null;
             }
         }
 
-        return null;
+        return ((T) result);
     }
 }

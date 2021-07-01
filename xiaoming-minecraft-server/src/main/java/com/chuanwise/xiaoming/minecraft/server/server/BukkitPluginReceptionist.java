@@ -7,6 +7,7 @@ import com.chuanwise.xiaoming.api.contact.contact.PrivateContact;
 import com.chuanwise.xiaoming.api.contact.message.GroupMessage;
 import com.chuanwise.xiaoming.api.contact.message.PrivateMessage;
 import com.chuanwise.xiaoming.api.exception.InteractorTimeoutException;
+import com.chuanwise.xiaoming.api.permission.PermissionAccessible;
 import com.chuanwise.xiaoming.api.recept.Receptionist;
 import com.chuanwise.xiaoming.api.response.ResponseGroup;
 import com.chuanwise.xiaoming.api.schedule.task.ScheduableTask;
@@ -25,6 +26,7 @@ import com.chuanwise.xiaoming.minecraft.server.XiaomingMinecraftPlugin;
 import com.chuanwise.xiaoming.minecraft.server.configuration.*;
 import com.chuanwise.xiaoming.minecraft.server.data.ServerPlayer;
 import com.chuanwise.xiaoming.minecraft.server.data.ServerPlayerData;
+import com.chuanwise.xiaoming.minecraft.server.util.EnvironmentUtils;
 import com.chuanwise.xiaoming.minecraft.socket.SocketController;
 import com.chuanwise.xiaoming.minecraft.thread.StopableRunnable;
 import com.chuanwise.xiaoming.minecraft.util.*;
@@ -92,6 +94,13 @@ public class BukkitPluginReceptionist implements StopableRunnable {
                 stop();
             });
 
+            controller.setDebug(configuration.isDebug());
+            controller.setOnThrowable(throwable -> {
+                if (configuration.isDebug()) {
+                    throwable.printStackTrace();
+                }
+            });
+
             controller.register(PackType.MC_DISCONNECT, pack -> {
                 if (Objects.nonNull(detail) && !StringUtils.isEmpty(detail.getName()) && configuration.isEnableDisconnectLog()) {
                     final String name = detail.getName();
@@ -116,19 +125,23 @@ public class BukkitPluginReceptionist implements StopableRunnable {
             threadPool.execute(() -> {
                 try {
                     // 小明发起身份验证请求
+                    log.info("已发起身份验证，等待服务器回应");
                     controller.sendLater(new Pack(PackType.XM_REQUIRE_MC_ENCRYPTED_IDENTIFY));
 
                     final String serverEncryptedIdentify = controller.nextPack(PackType.MC_ENCRYPTED_IDENTIFY).getContent(String.class);
                     final MinecraftServerDetail serverDetail = configuration.forEncryptedIdentify(serverEncryptedIdentify);
 
+                    log.info("收到服务器加密凭据，正在验证");
                     final ConnectHistory connectHistory = plugin.getConnectHistory();
                     if (Objects.nonNull(serverDetail)) {
                         this.detail = serverDetail;
 
                         // 检查是否重复连接
-                        final BukkitPluginReceptionist sameIdentifyReceptionist = server.forReceptionist(detail.getName());
+                        final BukkitPluginReceptionist sameIdentifyReceptionist = server.forName(detail.getName());
                         if (Objects.nonNull(sameIdentifyReceptionist) && sameIdentifyReceptionist.getController().test()) {
                             controller.sendLater(PackType.XM_DENY_IDENTIFY, "同身份服务器已经连接");
+                            log.error("因已与同身份（" + sameIdentifyReceptionist.getDetail().getIdentify() + "）服务器" +
+                                    "「" + sameIdentifyReceptionist.getDetail().getName() + "」连接，小明拒绝了本次连接请求");
                             stop();
                             return;
                         }
@@ -137,6 +150,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
                         connectTime = System.currentTimeMillis();
 
                         // 发送自己的身份
+                        logInfo("已发送小明凭据，等待服务器验证");
                         controller.sendLater(PackType.XM_ACCEPT_ENCRYPTED_IDENTIFY, PasswordHashUtils.createHash(configuration.getXiaomingIdentify()));
                         server.getReceptionists().add(this);
 
@@ -145,12 +159,14 @@ public class BukkitPluginReceptionist implements StopableRunnable {
                             if (configuration.isEnableConnectLog()) {
                                 plugin.sendMessageToLog("「" + serverDetail.getName() + "」成功连接到小明");
                             }
+                            logInfo("通过验证，成功连接到服务器");
                             registerListeners();
                         } else {
                             // 如果是新出现的请求
                             if (configuration.isAlwaysLogFailConnection() || !connectHistory.isConnected(serverDetail.getIdentify())) {
                                 plugin.sendMessageToLog("「" + serverDetail.getName() + "」尝试连接小明，但因小明身份无效，该服务器拒绝了小明的请求");
                             }
+                            logInfo("小明身份无效，该服务器拒绝了小明的请求");
                             stop();
                         }
                         connectHistory.addHistory(serverDetail.getIdentify());
@@ -174,6 +190,8 @@ public class BukkitPluginReceptionist implements StopableRunnable {
 
                         connectHistory.addHistory(identify);
                         controller.send(PackType.XM_DENY_IDENTIFY, "请在 QQ 上添加对本服的身份记录");
+
+                        log.info("小明拒绝了本次连接，请添加对本服的记录");
                         stop();
                     }
                     getXiaomingBot().getScheduler().readySave(connectHistory);
@@ -260,12 +278,18 @@ public class BukkitPluginReceptionist implements StopableRunnable {
         return controller.nextPack(PackType.MC_ONLINE_PLAYER_RESULT).getContent(OnlinePlayerContent.class).getPlayerContents();
     }
 
+    public void logIfDebug(String message) {
+        if (configuration.isDebug()) {
+            logInfo(message);
+        }
+    }
+
     public void logInfo(String message) {
         log.info("[" + detail.getName() + "] " + message);
     }
 
     public boolean isOnline(String playerId) throws IOException {
-        logInfo("请求检查玩家是否在线：" + playerId);
+        logIfDebug("请求检查玩家是否在线：" + playerId);
         final int requestId = allocateRequestId();
         controller.sendLater(PackType.XM_CHECK_ONLINE, new IdContent(requestId, playerId));
         return controller.nextContent(PackType.MC_CHECK_ONLINE_RESULT, requestId).getContent(Boolean.class);
@@ -284,21 +308,21 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent sendTitle(Set<String> playerIds, String title, String subtitle, int fadeIn, int delay, int fadeOut) throws IOException {
-        logInfo("向玩家：" + playerIds + " 显示主标题：" + title + "，副标题：" + subtitle);
+        logIfDebug("向玩家：" + playerIds + " 显示主标题：" + title + "，副标题：" + subtitle);
         final int requestId = allocateRequestId();
         PackUtils.sendResult(controller, requestId, PackType.XM_SEND_TITLE, new SendTitleContent(playerIds, title, subtitle, fadeIn, delay, fadeOut));
         return controller.nextResult(PackType.MC_SEND_TITLE_RESULT, requestId);
     }
 
     public ResultContent sendTitleToAllPlayers(String title, String subtitle, int fadeIn, int delay, int fadeOut) throws IOException {
-        logInfo("向所有玩家显示主标题：" + title + "，副标题：" + subtitle);
+        logIfDebug("向所有玩家显示主标题：" + title + "，副标题：" + subtitle);
         final int requestId = allocateRequestId();
         PackUtils.sendResult(controller, requestId, PackType.XM_SEND_TITLE_TO_ALL_PLAYERS, new SendTitleToAllPlayersContent(title, subtitle, fadeIn, delay, fadeOut));
         return controller.nextResult(PackType.MC_SEND_TITLE_RESULT, requestId);
     }
 
     public ResultContent sendTitleToAllPlayers(String title, String subtitle) throws IOException {
-        logInfo("向所有玩家显示主标题：" + title + "，副标题：" + subtitle);
+        logIfDebug("向所有玩家显示主标题：" + title + "，副标题：" + subtitle);
         return sendTitleToAllPlayers(title, subtitle, 10, 100, 20);
     }
 
@@ -315,14 +339,14 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent sendMessageWithoutMessageHead(Set<String> playerIds, String message) throws IOException {
-        logInfo("向玩家：" + playerIds + " 发送消息：" + message);
+        logIfDebug("向玩家：" + playerIds + " 发送消息：" + message);
         final int requestId = allocateRequestId();
         controller.sendLater(PackType.XM_SEND_MESSAGE, new IdContent(requestId, new ShowMessageContent(playerIds, message)));
         return controller.nextResult(PackType.MC_SEND_MESSAGE_RESULT, requestId);
     }
 
     public ResultContent sendMessageToAllPlayersWithoutMessageHead(String message) throws IOException {
-        logInfo("向所有玩家发送消息：" + message);
+        logIfDebug("向所有玩家发送消息：" + message);
         final int requestId = allocateRequestId();
         controller.sendLater(PackType.XM_SEND_MESSAGE_TO_ALL_PLAYERS, new IdContent(requestId, message));
         return controller.nextResult(PackType.MC_SEND_MESSAGE_RESULT, requestId);
@@ -333,14 +357,14 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public boolean hasWorld(String worldName) throws IOException {
-        logInfo("判断是否存在世界：" + worldName);
+        logIfDebug("判断是否存在世界：" + worldName);
         final int requestId = allocateRequestId();
         controller.sendLater(PackType.XM_HAS_WORLD, new IdContent(requestId, worldName));
         return controller.nextContent(PackType.MC_HAS_WORLD_RESULT, requestId).getContent(Boolean.class);
     }
 
     public boolean hasPermission(String playerId, String permission) throws IOException {
-        logInfo("检查玩家 " + playerId + " 是否具有权限：" + permission);
+        logIfDebug("检查玩家 " + playerId + " 是否具有权限：" + permission);
         final int requestId = allocateRequestId();
         controller.sendLater(PackType.XM_HAS_PERMISSION, new IdContent(requestId, new HasPermissionContent(playerId, permission)));
         return controller.nextContent(PackType.MC_HAS_PERMISSION_RESULT, requestId).getContent(Boolean.class);
@@ -351,7 +375,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public Set<String> listWorldsNames() throws IOException {
-        logInfo("正在获取世界名");
+        logIfDebug("正在获取世界名");
         controller.sendLater(PackType.XM_WORLD_NAME);
         return controller.nextPack(PackType.MC_WORLD_NAME_RESULT).getContent(Set.class);
     }
@@ -362,9 +386,9 @@ public class BukkitPluginReceptionist implements StopableRunnable {
 
     public ResultContent executeAsPlayer(String playerId, String command) throws IOException {
         if (Objects.nonNull(playerId)) {
-            logInfo("正在申请以玩家：" + playerId + " 身份执行：" + command);
+            logIfDebug("正在申请以玩家：" + playerId + " 身份执行：" + command);
         } else {
-            logInfo("正在申请以控制台身份执行：" + command);
+            logIfDebug("正在申请以控制台身份执行：" + command);
         }
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, new ServerCommandContent(playerId, command));
@@ -374,21 +398,21 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public IdContent onGetBindedQQ(int requestId, String playerId) throws IOException {
-        logInfo("正在获取玩家 " + playerId + " 绑定的 QQ");
+        logIfDebug("正在获取玩家 " + playerId + " 绑定的 QQ");
         final ServerPlayer serverPlayer = playerData.forPlayer(playerId);
         return PackUtils.sendResult(controller, requestId, PackType.XM_GET_BINDED_QQ_RESULT,
                 Objects.nonNull(serverPlayer) ? serverPlayer.getCode() : null);
     }
 
     public IdContent onGetAliasOrCode(int requestId, String playerId) throws IOException {
-        logInfo("正在获取玩家 " + playerId + " 绑定的 QQ 的备注");
+        logIfDebug("正在获取玩家 " + playerId + " 绑定的 QQ 的备注");
         final ServerPlayer serverPlayer = playerData.forPlayer(playerId);
         return PackUtils.sendResult(controller, requestId, PackType.XM_GET_ALIAS_OR_CODE_RESULT,
                 Objects.nonNull(serverPlayer) ? getXiaomingBot().getAccountManager().getAliasOrCode(serverPlayer.getCode()) : null);
     }
 
     public ResultContent onExecuteInGroup(int requestId, long group, String playerId, String command) throws IOException {
-        logInfo("正在以玩家 " + playerId + " 绑定的 QQ 的身份在群 " + group + " 中执行小明指令：" + command);
+        logIfDebug("正在以玩家 " + playerId + " 绑定的 QQ 的身份在群 " + group + " 中执行小明指令：" + command);
         final ServerPlayer serverPlayer = playerData.forPlayer(playerId);
         if (Objects.isNull(serverPlayer)) {
             return PackUtils.sendResult(controller, requestId, PackType.XM_COMMAND_RESULT, false, "你还没有绑定 QQ，不能执行小明指令。" +
@@ -431,7 +455,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent onExecuteInTemp(int requestId, long group, String playerId, String command) throws IOException {
-        logInfo("正在以玩家 " + playerId + " 绑定的 QQ 的身份在群 " + group + " 的临时会话中执行小明指令：" + command);
+        logIfDebug("正在以玩家 " + playerId + " 绑定的 QQ 的身份在群 " + group + " 的临时会话中执行小明指令：" + command);
         final ServerPlayer serverPlayer = playerData.forPlayer(playerId);
         if (Objects.isNull(serverPlayer)) {
             return PackUtils.sendResult(controller, requestId, PackType.XM_COMMAND_RESULT, false, "你还没有绑定 QQ，不能执行小明指令。" +
@@ -472,7 +496,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent onExecuteInPrivate(int requestId, String playerId, String command) throws IOException {
-        logInfo("正在以玩家 " + playerId + " 绑定的 QQ 的身份在私聊中执行小明指令：" + command);
+        logIfDebug("正在以玩家 " + playerId + " 绑定的 QQ 的身份在私聊中执行小明指令：" + command);
         final ServerPlayer serverPlayer = playerData.forPlayer(playerId);
         if (Objects.isNull(serverPlayer)) {
             return PackUtils.sendResult(controller, requestId, PackType.XM_COMMAND_RESULT, false, "你还没有绑定 QQ，不能执行小明指令。" +
@@ -505,7 +529,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent playerConfirm(String playerId, String what, long timeout) throws IOException {
-        logInfo("正在请求玩家：" + playerId + " 在" + TimeUtils.toTimeString(timeout) + "之内确认：" + what);
+        logIfDebug("正在请求玩家：" + playerId + " 在" + TimeUtils.toTimeString(timeout) + "之内确认：" + what);
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, new PlayerConfirmOrAcceptContent(playerId, what, timeout));
         controller.sendLater(PackType.XM_PLAYER_CONFIRM, content);
@@ -513,7 +537,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent playerAccept(String playerId, String what, long timeout) throws IOException {
-        logInfo("正在请求玩家：" + playerId + " 在" + TimeUtils.toTimeString(timeout) + "之内审批：" + what);
+        logIfDebug("正在请求玩家：" + playerId + " 在" + TimeUtils.toTimeString(timeout) + "之内审批：" + what);
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, new PlayerConfirmOrAcceptContent(playerId, what, timeout));
         controller.sendLater(PackType.XM_PLAYER_ACCEPT, content);
@@ -537,7 +561,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent sendWorldMessageWithoutMessageHead(Set<String> worldNames, String message) throws IOException {
-        logInfo("正在向世界：" + worldNames + " 内的玩家显示消息：" + message);
+        logIfDebug("正在向世界：" + worldNames + " 内的玩家显示消息：" + message);
         final int requestId = allocateRequestId();
         final IdContent content = new IdContent(requestId, new WorldMessageContent(worldNames, message));
         controller.sendLater(PackType.XM_SEND_WORLD_MESSAGE, content);
@@ -555,12 +579,12 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public void broadcastMessageWithoutMessageHead(String message) {
-        logInfo("正在发送全服消息：" + message);
+        logIfDebug("正在发送全服消息：" + message);
         controller.sendLater(PackType.XM_BROADCAST_MESSAGE, message);
     }
 
     public ResultContent onBind(int requestId, String playerId, long code) throws IOException {
-        logInfo("正在受理 " + playerId + " => " + code + " 的绑定请求");
+        logIfDebug("正在受理 " + playerId + " => " + code + " 的绑定请求");
 
         // 找到绑定目标之前的目标
         final ServerPlayer sameQQPlayer = playerData.forPlayer(code);
@@ -617,12 +641,12 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public void onLog(String message) {
-        logInfo(message);
+        log.info(message);
         plugin.sendMessageToLog("「" + detail.getName() + "」的日志：" + message);
     }
 
     public ResultContent onPlayerChat(int requestId, PlayerContent player, String message, boolean echo) {
-        logInfo("正在处理 " + player + " 的聊天信息：" + message + "，回响：" + echo);
+        logIfDebug("正在处理 " + player + " 的聊天信息：" + message + "，回响：" + echo);
         final ServerPlayer serverPlayer = playerData.forPlayer(player.getPlayerId());
 
         // 构造共有变量表
@@ -650,24 +674,33 @@ public class BukkitPluginReceptionist implements StopableRunnable {
             final String head = channel.getHead();
 
             if (message.startsWith(head) && message.length() > head.length()) {
+                // 检查绑定 ID
                 if (Objects.isNull(serverPlayer)) {
                     return PackUtils.sendResult(controller, requestId, PackType.XM_PLAYER_CHAT_RESULT, false, "你的消息本应被被发送到「" + channel.getName() + "」等频道，" +
-                            "但你还没有绑定 QQ，不能发送消息。" +
-                            "赶快用 " + Formatter.yellow("/xm bind <你的QQ>") + " 来绑定吧");
+                            "但你还没有绑定 QQ，不能发送消息。赶快用 " + Formatter.yellow("/xm bind <你的QQ>") + " 来绑定吧");
+                }
+
+                // 检查权限
+                if (getXiaomingBot().getPermissionManager().userAccessible(serverPlayer.getCode(), "minecraft.chat.group." + channel.getName()) != PermissionAccessible.ACCESSABLE) {
+                    failChannels.add(channel);
+                    continue;
+                }
+
+                // 检查该频道是否关联了当前服务器或世界
+                if (!detail.hasTag(channel.getServerTag()) || !detail.worldHasTag(player.getWorldName(), channel.getWorldTag())) {
+                    failChannels.add(channel);
+                    continue;
                 }
 
                 final String messageWithoutHead = message.substring(head.length());
 
                 // 构造频道变量表
-                Map<String, Object> channelEnvironment = new HashMap<>();
-                channelEnvironment.put("channel.name", channel.getName());
-                channelEnvironment.put("channel.head", channel.getHead());
-                channelEnvironment.put("channel.groupTag", channel.getGroupTag());
+                final Map<String, String> channelEnvironment = EnvironmentUtils.forGroupChannel(channel);
                 commonEnvironment.put("message", messageWithoutHead);
 
                 // 换变量，去掉颜色字符等东西
-                final String commonEnvoronmentReplacedMessage = ArgumentUtils.replaceArguments(channel.getFormat(), commonEnvironment, maxIterateTime);
-                final String channelEnvoronmentReplacedMessage = ArgumentUtils.replaceArguments(commonEnvoronmentReplacedMessage, channelEnvironment, maxIterateTime);
+                final String commonEnvironmentReplacedMessage = ArgumentUtils.replaceArguments(channel.getFormat(), commonEnvironment, maxIterateTime);
+                final String channelEnvironmentReplacedMessage = ArgumentUtils.replaceArguments(commonEnvironmentReplacedMessage, channelEnvironment, maxIterateTime);
 
                 boolean currentChannelSuccess = true;
                 try {
@@ -695,12 +728,9 @@ public class BukkitPluginReceptionist implements StopableRunnable {
                         }
 
                         // 构造群内的变量环境
-                        final Map<String, Object> groupEnvironment = new HashMap<>();
-                        groupEnvironment.put("group.code", groupContact.getCode());
-                        groupEnvironment.put("group.name", groupContact.getName());
-                        groupEnvironment.put("group.alias", groupContact.getAlias());
+                        final Map<String, String> groupEnvironment = EnvironmentUtils.forGroup(groupContact);
 
-                        final String groupEnvironmentReplacedMessage = ArgumentUtils.replaceArguments(channelEnvoronmentReplacedMessage, groupEnvironment, maxIterateTime);
+                        final String groupEnvironmentReplacedMessage = ArgumentUtils.replaceArguments(channelEnvironmentReplacedMessage, groupEnvironment, maxIterateTime);
                         final String finalMessage = Formatter.clearColors(groupEnvironmentReplacedMessage);
 
                         groupContact.send(replacePlayerIdToAt(finalMessage, groupContact));
@@ -710,7 +740,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
                             getXiaomingBot().getScheduler().run(() -> {
                                 final MinecraftChannel echoChannel = chatSettings.forMinecraftChannel(channel.getName());
                                 if (Objects.nonNull(echoChannel)) {
-                                    logInfo("找到同名服务器频道：" + echoChannel.getName() + "，启动回响");
+                                    logIfDebug("找到同名服务器频道：" + echoChannel.getName() + "，启动回响");
                                     final GroupXiaomingUser groupXiaomingUser = getXiaomingBot().getReceptionistManager().getReceptionist(serverPlayer.getCode()).getOrPutGroupXiaomingUser(groupContact, senderMember);
                                     final GroupMessageImpl groupMessage = new GroupMessageImpl(groupXiaomingUser,
                                             new PlainText(echoChannel.getHead()).plus(message));
@@ -742,7 +772,8 @@ public class BukkitPluginReceptionist implements StopableRunnable {
                 successMessage = "消息被成功发送至频道：" + CollectionUtils.getSummary(successGroupChannels, GroupChannel::getName, "", "", "、");
             }
             if (!failChannels.isEmpty()) {
-                failMessage = "消息没有在这些频道成功发送：" + CollectionUtils.getSummary(failChannels, GroupChannel::getName, "", "", "、");
+                failMessage = Formatter.red("可能因为你不在该群，缺少权限或小明被禁言等原因，消息没有在这些频道成功发送：" +
+                        CollectionUtils.getSummary(failChannels, channel -> Formatter.red(channel.getName()), "", "", Formatter.gray("、")));
             }
 
             return PackUtils.sendResult(controller, requestId, PackType.XM_PLAYER_CHAT_RESULT, !failChannels.isEmpty(),
@@ -751,7 +782,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent onUnbind(int requestId, String playerId) {
-        logInfo("正在受理 " + playerId + " 解绑请求");
+        logIfDebug("正在受理 " + playerId + " 解绑请求");
         final ServerPlayer serverPlayer = playerData.forPlayer(playerId);
 
         final boolean success;
@@ -771,7 +802,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent onApply(int requestId, PlayerContent player, String command) {
-        logInfo("正在处理指令申请请求：" + player + "，指令：" + command);
+        logIfDebug("正在处理指令申请请求：" + player + "，指令：" + command);
         final long applyCommandTimeout = configuration.getApplyCommandTimeout();
 
         plugin.sendMessageToLog("「" + detail.getName() + "」中的玩家「" + player.getPlayerId() + "」" +
@@ -800,7 +831,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent onAddServerTag(int requestId, String tag) {
-        logInfo("正在处理增加服务器 tag：" + tag + " 请求");
+        logIfDebug("正在处理增加服务器 tag：" + tag + " 请求");
         if (detail.hasTag(tag)) {
             return PackUtils.sendResult(controller, requestId, PackType.XM_ADD_SERVER_TAG_RESULT, false, "服务器已经具备标记「" + tag + "」了");
         } else {
@@ -811,7 +842,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent onRemoveServerTag(int requestId, String tag) {
-        logInfo("正在处理删除服务器 tag：" + tag + " 请求");
+        logIfDebug("正在处理删除服务器 tag：" + tag + " 请求");
         if (Arrays.asList(detail.getName(), "recorded").contains(tag)) {
             return PackUtils.sendResult(controller, requestId, PackType.XM_REMOVE_SERVER_TAG_RESULT, false, "「" + tag + "」是原生标记，不可以删除");
         }
@@ -825,14 +856,14 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public Set<String> onListServerTags() {
-        logInfo("正在处理获取服务器 tag 请求");
+        logIfDebug("正在处理获取服务器 tag 请求");
         final Set<String> tags = detail.getTags();
         controller.sendLater(PackType.XM_LIST_SERVER_TAG_RESULT, tags);
         return tags;
     }
 
     public void onFlushWorlds() throws IOException {
-        logInfo("正在刷新世界缓存");
+        logIfDebug("正在刷新世界缓存");
         final Set<String> worldsNames = listWorldsNames();
         final Map<String, Set<String>> elderWorldTags = detail.getWorldTags();
         final Map<String, Set<String>> worldTags = new HashMap<>(worldsNames.size());
@@ -849,7 +880,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public void onFlush() throws IOException {
-        logInfo("正在处理刷新所有数据请求");
+        logIfDebug("正在处理刷新所有数据请求");
         onFlushWorlds();
     }
 
@@ -993,21 +1024,21 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public Set<String> onListWorldNames() {
-        logInfo("正在处理拉取世界缓存名请求");
+        logIfDebug("正在处理拉取世界缓存名请求");
         final Set<String> content = detail.getWorldTags().keySet();
         controller.sendLater(PackType.XM_LIST_WORLD_RESULT, content);
         return content;
     }
 
     public Set<String> onListWorldTags(int requestId, String worldName) {
-        logInfo("正在处理拉取世界 tag 请求");
+        logIfDebug("正在处理拉取世界 tag 请求");
         final Set<String> tags = detail.forWorldTags(worldName);
         PackUtils.sendResult(controller, requestId, PackType.XM_LIST_WORLD_TAG_RESULT, tags);
         return tags;
     }
 
     public ResultContent onRemoveWorldTags(int requestId, String worldName, String tag) {
-        logInfo("正在处理删除世界 " + worldName + " 的 tag：" + tag + " 请求");
+        logIfDebug("正在处理删除世界 " + worldName + " 的 tag：" + tag + " 请求");
         if (Arrays.asList(worldName, "recorded").contains(tag)) {
             return PackUtils.sendResult(controller, requestId, PackType.XM_REMOVE_WORLD_TAG_RESULT, false, "「" + tag + "」是原生标记，不可以删除");
         }
@@ -1021,7 +1052,7 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     }
 
     public ResultContent onAddWorldTags(int requestId, String worldName, String tag) {
-        logInfo("正在处理增加世界 " + worldName + " 的 tag：" + tag + " 请求");
+        logIfDebug("正在处理增加世界 " + worldName + " 的 tag：" + tag + " 请求");
         if (detail.worldHasTag(worldName, tag)) {
             return PackUtils.sendResult(controller, requestId, PackType.XM_ADD_WORLD_TAG_RESULT, false, "世界「" + worldName + "」已经有标记「" + tag + "」了");
         } else {
@@ -1046,5 +1077,26 @@ public class BukkitPluginReceptionist implements StopableRunnable {
     public void onThrowable(IOException exception) {
         controller.stopCausedBy(exception);
         stop();
+    }
+
+    public boolean test() {
+        return Objects.nonNull(controller) && controller.test();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof BukkitPluginReceptionist)) {
+            return false;
+        }
+        BukkitPluginReceptionist that = (BukkitPluginReceptionist) o;
+        return Objects.equals(detail, that.detail);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(detail);
     }
 }

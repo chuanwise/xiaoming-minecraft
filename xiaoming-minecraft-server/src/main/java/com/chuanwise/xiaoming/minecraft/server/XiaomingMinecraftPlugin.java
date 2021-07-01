@@ -3,7 +3,9 @@ package com.chuanwise.xiaoming.minecraft.server;
 import com.chuanwise.xiaoming.core.plugin.XiaomingPluginImpl;
 import com.chuanwise.xiaoming.minecraft.server.configuration.ConnectHistory;
 import com.chuanwise.xiaoming.minecraft.server.configuration.ServerConfiguration;
+import com.chuanwise.xiaoming.minecraft.server.data.CommandData;
 import com.chuanwise.xiaoming.minecraft.server.data.ServerPlayerData;
+import com.chuanwise.xiaoming.minecraft.server.interactor.CustomCommandInteractor;
 import com.chuanwise.xiaoming.minecraft.server.interactor.ServerCommandInteractor;
 import com.chuanwise.xiaoming.minecraft.server.interactor.ServerMessageInteractor;
 import com.chuanwise.xiaoming.minecraft.server.server.XiaomingMinecraftServer;
@@ -24,6 +26,7 @@ public class XiaomingMinecraftPlugin extends XiaomingPluginImpl {
 
     ServerMessageInteractor serverMessageInteractor;
     ConnectHistory connectHistory;
+    CommandData commandData;
 
     @Override
     public void onLoad() {
@@ -38,6 +41,7 @@ public class XiaomingMinecraftPlugin extends XiaomingPluginImpl {
         playerData = loadFileOrProduce(ServerPlayerData.class, new File(getDataFolder(), "players.json"), ServerPlayerData::new);
         serverMessageInteractor = new ServerMessageInteractor(this, configuration, playerData, minecraftServer);
         connectHistory = loadFileOrProduce(ConnectHistory.class, new File(getDataFolder(), "histories.json"), ConnectHistory::new);
+        commandData = loadFileOrProduce(CommandData.class, new File(getDataFolder(), "commands.json"), CommandData::new);
 
         // 启动服务器
         if (configuration.isAutoEnableServer()) {
@@ -51,8 +55,8 @@ public class XiaomingMinecraftPlugin extends XiaomingPluginImpl {
         }
 
         getXiaomingBot().getInteractorManager().register(new ServerCommandInteractor(this), this);
+        getXiaomingBot().getInteractorManager().register(new CustomCommandInteractor(this), this);
         getXiaomingBot().getInteractorManager().register(serverMessageInteractor, this);
-//        getXiaomingBot().getInteractorManager().getInteractors(this).remove(serverMessageInteractor);
     }
 
     public void sendMessageToLog(String message) {

@@ -50,14 +50,16 @@ public class XiaomingCommandExecutor implements CommandExecutor {
             Formatter.yellow("/xm world [worldName|~] [add|remove] [tag]") + Formatter.gray("：") + "为某世界增加或删除标记\n" +
             Formatter.yellow("/xm flush") + Formatter.gray("：") + "手动刷新小明有关本服的缓存\n" +
             Formatter.yellow("/xm flush world") + Formatter.gray("：") + "手动刷新小明的世界缓存\n" +
-            Formatter.red("/xm link") + Formatter.gray("：") + "查看连接状态\n" +
-            Formatter.red("/xm link test") + Formatter.gray("：") + "测试连接状态\n" +
-            Formatter.red("/xm link connect") + Formatter.gray("：") + "通过设置的地址和端口连接小明\n" +
-            Formatter.red("/xm link connect [address] [port]") + Formatter.gray("：") + "通过指定的地址和端口连接到服务器\n" +
-            Formatter.red("/xm link disconnect") + Formatter.gray("：") + "断开和服务器的连接\n" +
-            Formatter.red("/xm link reconnect") + Formatter.gray("：") + "通过设置的地址和端口重新连接到小明\n" +
-            Formatter.red("/xm link reconnect [address] [port]") + Formatter.gray("：") + "通过指定的地址和端口重新连接到小明\n" +
+            Formatter.blue("/xm link") + Formatter.gray("：") + "查看连接状态\n" +
+            Formatter.blue("/xm link test") + Formatter.gray("：") + "测试连接状态\n" +
+            Formatter.blue("/xm link connect") + Formatter.gray("：") + "通过设置的地址和端口连接小明\n" +
+            Formatter.blue("/xm link connect [address] [port]") + Formatter.gray("：") + "通过指定的地址和端口连接到服务器\n" +
+            Formatter.blue("/xm link disconnect") + Formatter.gray("：") + "断开和服务器的连接\n" +
+            Formatter.blue("/xm link reconnect") + Formatter.gray("：") + "通过设置的地址和端口重新连接到小明\n" +
+            Formatter.blue("/xm link reconnect [address] [port]") + Formatter.gray("：") + "通过指定的地址和端口重新连接到小明\n" +
             Formatter.red("/xm reload") + Formatter.gray("：") + "重新加载插件\n" +
+            Formatter.red("/xm debug") + Formatter.gray("：") + "启动或关闭调试模式\n" +
+            Formatter.red("/xm identify") + Formatter.gray("：") + "查看相关凭据\n" +
             Formatter.red("/xm identify xiaoming") + Formatter.gray("：") + "查看合法小明凭据\n" +
             Formatter.red("/xm identify xiaoming [setTo]") + Formatter.gray("：") + "修改小明凭据\n" +
             Formatter.red("/xm identify server") + Formatter.gray("：") + "查看服务器凭据\n" +
@@ -141,30 +143,34 @@ public class XiaomingCommandExecutor implements CommandExecutor {
     }
 
     public boolean onUserConfirm(String name) {
-        final AtomicBoolean atomicBoolean = confirmResult.get(name);
-        if (Objects.isNull(atomicBoolean)) {
-            return false;
-        } else {
-            atomicBoolean.set(true);
-            synchronized (atomicBoolean) {
-                atomicBoolean.notifyAll();
+        synchronized (confirmResult) {
+            final AtomicBoolean atomicBoolean = confirmResult.get(name);
+            if (Objects.isNull(atomicBoolean)) {
+                return false;
+            } else {
+                atomicBoolean.set(true);
+                synchronized (atomicBoolean) {
+                    atomicBoolean.notifyAll();
+                }
+                confirmResult.remove(name);
+                return true;
             }
-            confirmResult.remove(name);
-            return true;
         }
     }
 
     public boolean onUserAccept(String name) {
-        final AtomicBoolean atomicBoolean = acceptResult.get(name);
-        if (Objects.isNull(atomicBoolean)) {
-            return false;
-        } else {
-            atomicBoolean.set(true);
-            synchronized (atomicBoolean) {
-                atomicBoolean.notifyAll();
+        synchronized (acceptResult) {
+            final AtomicBoolean atomicBoolean = acceptResult.get(name);
+            if (Objects.isNull(atomicBoolean)) {
+                return false;
+            } else {
+                atomicBoolean.set(true);
+                synchronized (atomicBoolean) {
+                    atomicBoolean.notifyAll();
+                }
+                acceptResult.remove(name);
+                return true;
             }
-            confirmResult.remove(name);
-            return true;
         }
     }
 
@@ -351,24 +357,15 @@ public class XiaomingCommandExecutor implements CommandExecutor {
                         final String finalAddress = address;
                         final int finalPort = port;
                         scheduler.runTaskAsynchronously(plugin, () -> {
-                            boolean success;
-                            try {
-                                bukkitSocket.setAddress(finalAddress);
-                                bukkitSocket.setPort(finalPort);
-                                if (bukkitSocket.test()) {
-                                    bukkitSocket.disconnect();
-                                    sender.sendMessage(Formatter.headThen(Formatter.gray("已断开服务器连接，5 秒后将自动重新连接")));
-                                    Thread.sleep(TimeUnit.SECONDS.toMillis(5));
-                                }
-                                bukkitSocket.connect();
-                                success = true;
-                            } catch (Exception exception) {
-                                success = false;
-                            }
-                            if (success) {
-                                sender.sendMessage(Formatter.headThen(Formatter.green("成功重新连接到小明")));
+                            bukkitSocket.setAddress(finalAddress);
+                            bukkitSocket.setPort(finalPort);
+
+                            if (bukkitSocket.test()) {
+                                sender.sendMessage(Formatter.headThen(Formatter.gray("已断开服务器连接，一段时间后会自动重新连接")));
+                                bukkitSocket.disconnectOrReconnect();
                             } else {
-                                sender.sendMessage(Formatter.headThen(Formatter.red("无法连接到小明，可能是地址端口不正确，或小明尚未启动")));
+                                sender.sendMessage(Formatter.headThen(Formatter.gray("一段时间后会自动连接")));
+                                bukkitSocket.disconnectOrReconnect();
                             }
                         });
                         break;
@@ -841,11 +838,13 @@ public class XiaomingCommandExecutor implements CommandExecutor {
             // identify server [SETTO]
             // identify xiaoming [SETTO]
             case "identify": {
-                if (strings.length == 1) {
-                    sender.sendMessage(Formatter.headThen(Formatter.red("缺少必要的目标参数")));
+                if (!requirePermission(sender, "xiaoming.identify")) {
                     return true;
                 }
-                if (!requirePermission(sender, "xiaoming.identify.server")) {
+                if (strings.length == 1) {
+                    sender.sendMessage(Formatter.headThen(Formatter.aroundByGrayBracket(Formatter.red("凭据信息")) + "\n" +
+                            Formatter.red("本服原始凭据") + Formatter.gray("：") + Formatter.yellow(configuration.getServerIdentify())) + "\n" +
+                            Formatter.red("小明原始凭据") + Formatter.gray("：") + Formatter.red(configuration.getXiaomingIdentify()));
                     return true;
                 }
 
@@ -984,6 +983,25 @@ public class XiaomingCommandExecutor implements CommandExecutor {
                     default:
                         sender.sendMessage(Formatter.headThen(Formatter.red("执行指令的场合只能是 group [群号]、temp [群号] 或 private")));
                         return true;
+                }
+                break;
+            }
+
+            // debug
+            case "debug": {
+                if (strings.length != 1) {
+                    readTheFuckManual(sender);
+                    return true;
+                }
+                if (!requirePermission(sender, "xiaoming.debug")) {
+                    return true;
+                }
+
+                configuration.setDebug(!configuration.isDebug());
+                if (configuration.isDebug()) {
+                    sender.sendMessage(Formatter.headThen(Formatter.green("成功启动调试模式")));
+                } else {
+                    sender.sendMessage(Formatter.headThen(Formatter.yellow("成功关闭调试模式")));
                 }
                 break;
             }
