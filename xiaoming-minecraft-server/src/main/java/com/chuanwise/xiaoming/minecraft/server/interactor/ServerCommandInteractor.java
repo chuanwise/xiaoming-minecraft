@@ -11,6 +11,7 @@ import com.chuanwise.xiaoming.core.interactor.command.CommandInteractorImpl;
 import com.chuanwise.xiaoming.minecraft.server.XiaomingMinecraftPlugin;
 import com.chuanwise.xiaoming.minecraft.server.util.ServerWords;
 import com.chuanwise.xiaoming.minecraft.server.util.TargetUtils;
+import com.chuanwise.xiaoming.minecraft.socket.SocketController;
 import com.chuanwise.xiaoming.minecraft.util.Formatter;
 import com.chuanwise.xiaoming.minecraft.pack.content.*;
 import com.chuanwise.xiaoming.minecraft.server.configuration.*;
@@ -62,6 +63,13 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
     public void onDebug(XiaomingUser user) {
         configuration.setDebug(!configuration.isDebug());
         getXiaomingBot().getScheduler().readySave(configuration);
+
+        for (BukkitPluginReceptionist receptionist : server.getReceptionists()) {
+            final SocketController controller = receptionist.getController();
+            if (Objects.nonNull(controller)) {
+                controller.setDebug(configuration.isDebug());
+            }
+        }
         if (configuration.isDebug()) {
             user.sendMessage("已启动调试模式");
         } else {
@@ -612,7 +620,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
                     user.sendWarning("服务器一个人都没有");
                 } else {
                     user.sendMessage("「" + target.getDetail().getName() + "」有 " + players.size() + " 人在线：\n" +
-                            Formatter.clearColors(CollectionUtils.getIndexSummary(players, PlayerContent::getDisplayName)));
+                            Formatter.clearColors(CollectionUtils.getIndexSummary(players, PlayerContent::getPlayerListName)));
                 }
             });
         });
@@ -914,6 +922,7 @@ public class ServerCommandInteractor extends CommandInteractorImpl {
     public void onSetDefaultTarget(XiaomingUser user, @FilterParameter("server") BukkitPluginReceptionist receptionist) {
         final String name = receptionist.getDetail().getName();
         configuration.setDefaultTarget(name);
+        getXiaomingBot().getScheduler().readySave(configuration);
         user.sendMessage("成功设置所有人的目标服务器为「" + name + "」");
     }
 

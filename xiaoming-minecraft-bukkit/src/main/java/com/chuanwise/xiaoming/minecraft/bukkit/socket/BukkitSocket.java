@@ -265,9 +265,9 @@ public class BukkitSocket {
     }
 
     public boolean onHasPermission(int requestId, String playerId, String permission) {
-        logIfDebug("检查玩家 " + playerId + " 是否具备权限 " + permission);
+        logIfDebug("检查在线玩家 " + playerId + " 是否具备权限 " + permission);
         final Player player = server.getPlayer(playerId);
-        final boolean content = Objects.nonNull(player) && player.hasPermission(permission);
+        final boolean content = Objects.nonNull(player) && Objects.equals(playerId, player.getName())  && player.hasPermission(permission);
         PackUtils.sendResult(controller, requestId, PackType.MC_HAS_PERMISSION_RESULT, content);
         return content;
     }
@@ -275,7 +275,7 @@ public class BukkitSocket {
     public boolean onIsOnline(int requestId, String playerId) {
         logIfDebug("检查用户 " + playerId + " 是否在线");
         final Player player = server.getPlayer(playerId);
-        final boolean content = Objects.nonNull(player) && player.isOnline();
+        final boolean content = Objects.nonNull(player) && Objects.equals(playerId, player.getName()) && player.isOnline();
         PackUtils.sendResult(controller, requestId, PackType.MC_CHECK_ONLINE_RESULT, content);
         return content;
     }
@@ -338,8 +338,9 @@ public class BukkitSocket {
                 logger.severe("远程执行指令时出现异常");
                 exception.printStackTrace();
             }
+            PackUtils.sendResult(controller, requestId, PackType.MC_COMMAND_RESULT, resultContent);
         });
-        return PackUtils.sendResult(controller, requestId, PackType.MC_COMMAND_RESULT, resultContent);
+        return resultContent;
     }
 
     public ResultContent onExecuteAsPlayer(int requestId, String playerId, String command) {
@@ -347,7 +348,7 @@ public class BukkitSocket {
         final Player realPlayer = server.getPlayer(playerId);
         final XiaomingCommandSender<?> fakePlayer;
 
-        if (Objects.isNull(realPlayer)) {
+        if (Objects.isNull(realPlayer) || !Objects.equals(playerId, realPlayer.getName())) {
             fakePlayer = new XiaomingNamedCommandSender(server.getConsoleSender(), playerId);
         } else {
             fakePlayer = new XiaomingPlayerCommandSender(realPlayer);
@@ -368,8 +369,9 @@ public class BukkitSocket {
                 logger.severe("远程执行指令时出现异常");
                 exception.printStackTrace();
             }
+            PackUtils.sendResult(controller, requestId, PackType.MC_COMMAND_RESULT, resultContent);
         });
-        return PackUtils.sendResult(controller, requestId, PackType.MC_COMMAND_RESULT, resultContent);
+        return resultContent;
     }
 
     public ResultContent onAsyncPlayerAccept(int requestId, String playerId, String message, long timeout) {
@@ -377,7 +379,7 @@ public class BukkitSocket {
         final Player player = server.getPlayer(playerId);
         final ResultContent resultContent = new ResultContent();
 
-        if (Objects.isNull(player) || !player.isOnline()) {
+        if (Objects.isNull(player) || !Objects.equals(playerId, player.getName())) {
             resultContent.setSuccess(false);
             resultContent.setObject("该玩家不在服务器");
             return PackUtils.sendResult(controller, requestId, PackType.MC_PLAYER_ACCET_RESULT, resultContent);
@@ -411,7 +413,7 @@ public class BukkitSocket {
         final Player player = server.getPlayer(playerId);
         final ResultContent resultContent = new ResultContent();
 
-        if (Objects.isNull(player) || !player.isOnline()) {
+        if (Objects.isNull(player) || !Objects.equals(playerId, player.getName())) {
             resultContent.setSuccess(false);
             resultContent.setObject("该玩家不在服务器");
             return PackUtils.sendResult(controller, requestId, PackType.MC_PLAYER_CONFIRM_RESULT, resultContent);
@@ -446,7 +448,7 @@ public class BukkitSocket {
 
         for (String playerId : playerIds) {
             final Player player = server.getPlayer(playerId);
-            if (Objects.isNull(player) || !player.isOnline()) {
+            if (Objects.isNull(player) || !Objects.equals(playerId, player.getName())) {
                 failPlayerNames.add(playerId);
             } else {
                 player.sendMessage(message);
@@ -466,7 +468,7 @@ public class BukkitSocket {
 
         for (String playerId : playerIds) {
             final Player player = server.getPlayer(playerId);
-            if (Objects.isNull(player)) {
+            if (Objects.isNull(player) || !Objects.equals(playerId, player.getName())) {
                 failPlayerNames.add(playerId);
             } else {
                 player.sendTitle(title, subtitle, fadeIn, delay, fadeOut);

@@ -351,7 +351,7 @@ public class XiaomingCommandExecutor implements CommandExecutor {
                             configuration.setPort(port);
                         } else if (strings.length != 2) {
                             readTheFuckManual(sender);
-                            return false;
+                            return true;
                         }
 
                         final String finalAddress = address;
@@ -998,6 +998,9 @@ public class XiaomingCommandExecutor implements CommandExecutor {
                 }
 
                 configuration.setDebug(!configuration.isDebug());
+                if (bukkitSocket.isConnected()) {
+                    bukkitSocket.getController().setDebug(configuration.isDebug());
+                }
                 if (configuration.isDebug()) {
                     sender.sendMessage(Formatter.headThen(Formatter.green("成功启动调试模式")));
                 } else {

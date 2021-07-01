@@ -43,7 +43,7 @@ public class SocketController implements StopableRunnable {
     final Map<PackType, List<Consumer<Pack>>> listeners = new ConcurrentHashMap<>();
 
     volatile boolean running;
-    volatile boolean debug;
+    volatile boolean debug = false;
 
     volatile Throwable throwable;
 
