@@ -23,6 +23,7 @@ import com.chuanwise.xiaoming.minecraft.server.util.TargetUtils;
 import com.chuanwise.xiaoming.minecraft.util.ArgumentUtils;
 import com.chuanwise.xiaoming.minecraft.util.Formatter;
 import com.chuanwise.xiaoming.minecraft.util.StringUtils;
+import lombok.var;
 import net.mamoe.mirai.message.code.MiraiCode;
 
 import java.io.IOException;

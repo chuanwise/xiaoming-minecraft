@@ -15,6 +15,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 @AllArgsConstructor
 public class XiaomingListener implements Listener {
